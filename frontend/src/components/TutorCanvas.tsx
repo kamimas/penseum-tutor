@@ -187,6 +187,18 @@ interface ToolParams {
   rows?: string[][];
   steps?: string[];
   topic?: string; // Optional topic name for frame labeling
+  // Annotation tool params (0-1000 normalized coordinates)
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  radius?: number;
+  from_x?: number;
+  from_y?: number;
+  to_x?: number;
+  to_y?: number;
+  label?: string;
+  text?: string;
 }
 
 // Check if content contains LaTeX math notation
@@ -676,6 +688,136 @@ function handleDrawFlowchart(
 }
 
 // ============================================
+// ANNOTATION HANDLERS (Vision-Aware)
+// ============================================
+
+/**
+ * Convert 0-1000 normalized coordinates to canvas page coordinates.
+ * Gemini sees the viewport; we need to map to tldraw's infinite canvas.
+ */
+function normalizedToCanvas(
+  editor: Editor,
+  normX: number,
+  normY: number
+): { x: number; y: number } {
+  const camera = editor.getCamera();
+  const viewport = editor.getViewportScreenBounds();
+
+  // Convert 0-1000 to 0-1
+  const fracX = normX / 1000;
+  const fracY = normY / 1000;
+
+  // Convert to screen pixels
+  const screenX = fracX * viewport.width;
+  const screenY = fracY * viewport.height;
+
+  // Convert to canvas page coordinates (accounting for zoom/pan)
+  const pageX = (screenX / camera.z) - camera.x;
+  const pageY = (screenY / camera.z) - camera.y;
+
+  return { x: pageX, y: pageY };
+}
+
+function handleHighlightArea(editor: Editor, params: ToolParams): void {
+  const { x = 500, y = 500, width = 100, height = 50, color = "yellow" } = params;
+
+  const topLeft = normalizedToCanvas(editor, x, y);
+  const bottomRight = normalizedToCanvas(editor, x + width, y + height);
+  const w = bottomRight.x - topLeft.x;
+  const h = bottomRight.y - topLeft.y;
+
+  const shapeId = createShapeId();
+  editor.createShapes([{
+    id: shapeId,
+    type: "geo",
+    x: topLeft.x,
+    y: topLeft.y,
+    opacity: 0.3,
+    props: {
+      geo: "rectangle",
+      w: Math.abs(w),
+      h: Math.abs(h),
+      color: color as any,
+      fill: "solid",
+    },
+  }]);
+
+  console.log(`[highlight_area] Created highlight at (${topLeft.x}, ${topLeft.y})`);
+}
+
+function handleDrawCircle(editor: Editor, params: ToolParams): void {
+  const { x = 500, y = 500, radius = 30, color = "red" } = params;
+
+  const center = normalizedToCanvas(editor, x, y);
+  const edge = normalizedToCanvas(editor, x + radius, y);
+  const r = Math.abs(edge.x - center.x);
+
+  const shapeId = createShapeId();
+  editor.createShapes([{
+    id: shapeId,
+    type: "geo",
+    x: center.x - r,
+    y: center.y - r,
+    props: {
+      geo: "ellipse",
+      w: r * 2,
+      h: r * 2,
+      color: color as any,
+      fill: "none",
+      size: "l",
+    },
+  }]);
+
+  console.log(`[draw_circle] Created circle at (${center.x}, ${center.y})`);
+}
+
+function handleDrawArrow(editor: Editor, params: ToolParams): void {
+  const { from_x = 400, from_y = 400, to_x = 600, to_y = 600, label = "" } = params;
+
+  const start = normalizedToCanvas(editor, from_x, from_y);
+  const end = normalizedToCanvas(editor, to_x, to_y);
+
+  const shapeId = createShapeId();
+  editor.createShapes([{
+    id: shapeId,
+    type: "arrow",
+    x: start.x,
+    y: start.y,
+    props: {
+      start: { x: 0, y: 0 },
+      end: { x: end.x - start.x, y: end.y - start.y },
+      color: "red" as any,
+      size: "l",
+      text: label,
+    },
+  }]);
+
+  console.log(`[draw_arrow] Created arrow from (${start.x}, ${start.y}) to (${end.x}, ${end.y})`);
+}
+
+function handleAddAnnotation(editor: Editor, params: ToolParams): void {
+  const { x = 500, y = 500, text = "", color = "blue" } = params;
+
+  const pos = normalizedToCanvas(editor, x, y);
+
+  const shapeId = createShapeId();
+  editor.createShapes([{
+    id: shapeId,
+    type: "text",
+    x: pos.x,
+    y: pos.y,
+    props: {
+      text: text,
+      size: "m",
+      color: color as any,
+      font: "sans",
+    },
+  }]);
+
+  console.log(`[add_annotation] Created annotation at (${pos.x}, ${pos.y}): ${text}`);
+}
+
+// ============================================
 // MAIN TOOL CALL HANDLER
 // ============================================
 export async function handleToolCall(
@@ -707,6 +849,19 @@ export async function handleToolCall(
       break;
     case "draw_flowchart":
       handleDrawFlowchart(editor, spatial, params);
+      break;
+    // Annotation tools (vision-aware)
+    case "highlight_area":
+      handleHighlightArea(editor, params);
+      break;
+    case "draw_circle":
+      handleDrawCircle(editor, params);
+      break;
+    case "draw_arrow":
+      handleDrawArrow(editor, params);
+      break;
+    case "add_annotation":
+      handleAddAnnotation(editor, params);
       break;
     default:
       console.warn(`[handleToolCall] Unknown tool: ${toolName}`);

@@ -7,6 +7,7 @@ import {
 import "@livekit/components-styles";
 import TutorCanvas from "../components/TutorCanvas";
 import { IntelligenceDock } from "../components/IntelligenceDock";
+import { ScreenShareButton } from "../components/ScreenShareButton";
 import { useEffect, useState, useCallback } from "react";
 
 // Ghost UI Reset Pill - minimal, transparent design
@@ -106,6 +107,7 @@ export default function Page() {
       <StatusPill onReset={handleReset} />
       <TutorCanvas />
       <RoomAudioRenderer />
+      <ScreenShareButton />
       <IntelligenceDock onReset={handleReset} />
     </LiveKitRoom>
   );
