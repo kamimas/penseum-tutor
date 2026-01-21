@@ -14,11 +14,11 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const apiKey = process.env.SERPAPI_KEY;
+  const apiKey = process.env.SERPAPI_API_KEY;
 
   if (!apiKey) {
     return NextResponse.json(
-      { error: "Server misconfigured: missing SERPAPI_KEY" },
+      { error: "Server misconfigured: missing SERPAPI_API_KEY" },
       { status: 500 }
     );
   }

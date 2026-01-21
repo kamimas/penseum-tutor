@@ -53,9 +53,38 @@ export class SpatialManager {
 
   /**
    * Get position for a new shape
-   * Layout flows top-to-bottom: all items stack vertically
+   * Supports explicit coordinates or auto-positioning
    */
-  getPosition(type: ContentType, estimatedHeight: number): SpatialPosition {
+  getPosition(
+    type: ContentType,
+    estimatedHeight: number,
+    options?: {
+      x?: number;
+      y?: number;
+    }
+  ): SpatialPosition {
+    const { x: explicitX, y: explicitY } = options || {};
+
+    // If absolute coordinates provided, use them directly
+    if (explicitX !== undefined && explicitY !== undefined) {
+      return {
+        x: explicitX,
+        y: explicitY,
+        isNewCluster: false, // Don't affect vertical flow
+        clusterX: 0,
+        clusterY: 0,
+        frameId: null,
+      };
+    }
+
+    // Default auto behavior (vertical stacking)
+    return this.getAutoPosition(type, estimatedHeight);
+  }
+
+  /**
+   * Auto-positioning logic (vertical stacking)
+   */
+  private getAutoPosition(type: ContentType, estimatedHeight: number): SpatialPosition {
     const isMajor = this.isMajorItem(type);
     const isFirstItem = !this.currentFrameId;
 
