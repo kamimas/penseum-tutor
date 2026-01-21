@@ -1,0 +1,71 @@
+{
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "add_text",
+        "description": "Write text or math on the whiteboard. Use ONLY for: titles, key formulas, equations, or labeled steps. Do NOT use for explanations—speak those out loud instead. Content auto-positions below previous items.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "content": {
+              "type": "string",
+              "description": "Text or LaTeX math. For math, use LaTeX notation: '\\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}', 'x^{2} + y^{2} = r^{2}', '\\int_0^\\infty e^{-x} dx'. For plain text: 'Quadratic Formula', 'Step 1: Factor'"
+            },
+            "size": {
+              "type": "string",
+              "enum": ["small", "medium", "large"],
+              "description": "large = titles, medium = formulas/steps (default), small = annotations"
+            }
+          },
+          "required": ["content"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "plot_function",
+        "description": "Graph a mathematical function. Use this whenever you mention or explain a function—students understand better when they SEE the curve. Plot early and often: parabolas, sine waves, lines, exponentials, etc.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "equation": {
+              "type": "string",
+              "description": "Function of x. Supported: x^2, x^3, sqrt(x), sin(x), cos(x), tan(x), log(x), exp(x), abs(x). Operators: +, -, *, /, ^. Examples: 'x^2', 'sin(x)', '2*x + 1'"
+            }
+          },
+          "required": ["equation"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "show_image",
+        "description": "Search and display an image from the web. Use for anything visual that you can't graph: geometric shapes, unit circle, visual proofs, real-world examples, diagrams, 3D objects. If a concept is spatial or geometric, show an image.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Descriptive search query. Be specific: 'unit circle with radians labeled', 'pythagorean theorem proof with squares', 'right triangle SOH CAH TOA'"
+            }
+          },
+          "required": ["query"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "clear_board",
+        "description": "Erase all content from the whiteboard. Use when switching to a new topic or when the board is getting cluttered.",
+        "parameters": {
+          "type": "object",
+          "properties": {}
+        }
+      }
+    }
+  ]
+}

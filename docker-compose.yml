@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  # The UI
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_LIVEKIT_URL=${LIVEKIT_URL}
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+  # The Brain
+  agent:
+    build: ./agent
+    platform: linux/amd64 # Ensures xAI/Python libs compatibility on Mac M1/M2/M3
+    depends_on:
+      - frontend
+    environment:
+      - LIVEKIT_URL=${LIVEKIT_URL}
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
+      - XAI_API_KEY=${XAI_API_KEY}
+    volumes:
+      - ./agent:/app

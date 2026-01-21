@@ -1,0 +1,77 @@
+LESSON: Cells and Their Functions
+
+Teach these 18 concepts in order:
+
+1. CELL BASICS
+Say: "A cell is the smallest unit of life - the basic building block of every living thing. Think of it like a tiny factory."
+Visual: show_image("cell basic structure diagram labeled")
+
+2. UNICELLULAR ORGANISMS
+Say: "Some organisms are made of just ONE cell - we call them unicellular. Amoeba and paramecium do everything in one cell!"
+Visual: show_image("amoeba paramecium unicellular organisms")
+
+3. CELL MEMBRANE
+Say: "Every cell has a membrane - like a security guard. It controls what goes in and out."
+Visual: show_image("cell membrane phospholipid bilayer diagram")
+
+4. EUKARYOTIC CELLS
+Say: "Eukaryotic cells are complex - they have a NUCLEUS and organelles. Your cells are eukaryotic!"
+Visual: show_image("eukaryotic cell structure labeled")
+
+5. PROKARYOTIC CELLS
+Say: "Prokaryotic cells are simpler - NO nucleus. Bacteria are prokaryotic."
+Visual: show_image("prokaryotic bacteria cell diagram")
+
+6. COMPARISON TABLE
+Say: "Let's compare eukaryotic and prokaryotic cells."
+Visual: draw_table(["Feature", "Eukaryotic", "Prokaryotic"], [["Nucleus", "Yes", "No"], ["Size", "Larger", "Smaller"], ["Examples", "Animals, plants", "Bacteria"]])
+
+7. NUCLEUS
+Say: "The nucleus is like the brain - it stores DNA and controls the cell."
+Visual: show_image("nucleus DNA chromosomes diagram")
+
+8. NUCLEOLUS
+Say: "Inside the nucleus is the nucleolus - it makes ribosomal RNA for building proteins."
+Visual: show_image("nucleolus ribosomal RNA diagram")
+
+9. CYTOSOL
+Say: "Cytosol is the jelly-like fluid filling the cell. Organelles float in it."
+Visual: show_image("cytosol cytoplasm cell diagram")
+
+10. ROUGH ER
+Say: "The Rough ER is covered in ribosomes. It makes proteins."
+Visual: show_image("rough endoplasmic reticulum ribosomes")
+
+11. SMOOTH ER
+Say: "The Smooth ER has no ribosomes. It makes fats and detoxifies."
+Visual: show_image("smooth endoplasmic reticulum lipids")
+
+12. GOLGI APPARATUS
+Say: "The Golgi is like a post office - it packages and ships proteins."
+Visual: show_image("golgi apparatus packaging diagram")
+
+13. LYSOSOMES
+Say: "Lysosomes are recycling centers. They break down waste."
+Visual: show_image("lysosome digestion diagram")
+
+14. PEROXISOMES
+Say: "Peroxisomes detoxify - they break down fatty acids using hydrogen peroxide."
+Visual: show_image("peroxisome detoxification diagram")
+
+15. MITOCHONDRIA
+Say: "Mitochondria are the POWERHOUSES - they make ATP energy."
+Visual: show_image("mitochondria ATP energy diagram")
+
+16. CYTOSKELETON
+Say: "The cytoskeleton gives shape and helps the cell move."
+Visual: show_image("cytoskeleton microfilaments microtubules")
+
+17. CENTROSOME
+Say: "The centrosome helps with cell division - it pulls chromosomes apart."
+Visual: show_image("centrosome cell division spindle")
+
+18. SUMMARY TABLE
+Say: "Here's a summary of all organelles and their functions."
+Visual: draw_table(["Organelle", "Function"], [["Nucleus", "Stores DNA"], ["Mitochondria", "Makes ATP"], ["Rough ER", "Makes proteins"], ["Smooth ER", "Makes lipids"], ["Golgi", "Packages/ships"], ["Lysosomes", "Breaks down waste"]])
+
+After concept 18, call finish_lesson().
