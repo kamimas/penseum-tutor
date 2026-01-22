@@ -4,35 +4,35 @@
   "concepts": [
     {
       "name": "the_intuition_hook",
-      "instructions": "Start by grounding the concept in reality. Explain that Calculus is the study of how things change. Use the analogy of a car's speedometer: a trip's average speed is easy (distance/time), but the speedometer shows your speed at this exact instant. Use 'show_image' to display a photo of a car speedometer or a rollercoaster drop. Use 'add_text' to define the Derivative as the 'instantaneous rate of change'. Call next_concept()."
+      "instructions": "Start by explaining that Calculus is the study of how things change. Use the car speedometer analogy: average speed is easy (distance/time), but the speedometer shows your speed at this exact instant. Use 'show_image' to display a car speedometer. Use 'add_text' to define 'Derivative = Instantaneous Rate of Change' at top-center. Call next_concept()."
     },
     {
       "name": "average_rate_gap",
-      "instructions": "Explain that to find a slope, we usually need two points. This is the 'Average Rate of Change' (Slope of the Secant Line). Use 'show_image' to display a diagram of a Secant Line intersecting a curve at two points (since we cannot plot two lines at once). Use 'add_text' to show the formula \\(\\frac{f(x+h) - f(x)}{h}\\) and explain that this calculates the slope between two distinct points. Call next_concept()."
+      "instructions": "Explain that to find a slope, we need two points. This is the Average Rate of Change (slope of a secant line). Use 'show_image' to display a secant line on a curve. Use 'add_text' to show the formula (f(x+h) - f(x)) / h at below-last. Call next_concept()."
     },
     {
       "name": "closing_the_gap",
-      "instructions": "Explain the Limit: what happens if we move the two points closer and closer until they touch? The Secant becomes a Tangent. Use 'plot_function' to graph \"x^2\". Use 'add_text' to define the derivative: \\(f'(x) = \\lim_{h \\to 0} \\frac{f(x+h) - f(x)}{h}\\). Ask the student to look at the graph at x=1 and imagine a line skimming the edge of the curve at that exact spot. Call next_concept()."
+      "instructions": "Ask what happens if we move the two points closer until they touch. The Secant becomes a Tangent! Use 'show_image' to display a tangent line touching a curve. Use 'add_text' to define the derivative: f'(x) = lim(h->0) [f(x+h) - f(x)] / h at below-last. Call next_concept()."
     },
     {
       "name": "spotting_the_pattern",
-      "instructions": "Instead of using the long limit formula every time, let's find a pattern. Use 'draw_table' with headers=[\"Function\", \"Derivative\"] and rows=[[\"x^2\", \"2x\"], [\"x^3\", \"3x^2\"], [\"x^4\", \"4x^3\"], [\"x^10\", \"10x^9\"]]. Use 'add_text' to ask the student: 'Look at the exponents. Can you guess the rule for x^n?' Call next_concept()."
+      "instructions": "Instead of using the limit formula every time, let's find a pattern. Use 'add_text' to show: x^2 -> 2x, x^3 -> 3x^2, x^4 -> 4x^3. Ask the student to guess the rule for x^n. Call next_concept()."
     },
     {
       "name": "power_rule_algorithm",
-      "instructions": "Confirm their guess: This is the Power Rule. You bring the power down and subtract one. Use 'draw_flowchart' with steps: ['Identify Exponent n', 'Multiply Coefficient by n', 'Subtract 1 from Exponent', 'Result is nx^{n-1}']. Use 'add_text' to show an example: \\(\\frac{d}{dx}(x^5) = 5x^4\\). Call next_concept()."
+      "instructions": "Confirm the pattern - this is the Power Rule! Bring the power down and subtract one. Use 'draw_diagram' with type='flowchart' and nodes=['Start: x^n', 'Bring power down', 'Subtract 1 from exponent', 'Result: n*x^(n-1)']. Use 'add_text' to show example: d/dx(x^5) = 5x^4 at below-last. Call next_concept()."
     },
     {
       "name": "linear_behavior",
-      "instructions": "Show how this works for straight lines. Use 'plot_function' to graph \"2*x + 1\". Use 'add_text' to explain: 'Notice this line never curves? Its slope is constant. Using the power rule on 2x^1 gives us 2x^0, which is just 2. The derivative of a linear term is just the coefficient.' Call next_concept()."
+      "instructions": "Show how this works for straight lines. Use 'show_image' to display a linear function graph. Explain that a line never curves so its slope is constant. Use 'add_text' to show d/dx(2x + 1) = 2 at below-last. The derivative of a linear term is just the coefficient. Call next_concept()."
     },
     {
       "name": "visualizing_slopes",
-      "instructions": "Synthesize the concepts visually. The derivative tells us if the function is rising or falling. Use 'plot_function' to graph \"x^3 - 3*x\". Use 'add_text' to guide them: 'Look at the graph. When the curve goes up, the derivative is positive. When it goes down, it is negative. Can you find the two spots (peaks/valleys) where the slope is exactly zero?' Call next_concept()."
+      "instructions": "The derivative tells us if the function is rising or falling. Use 'show_image' to display a cubic function with peaks and valleys. Point out: when the curve goes up, derivative is positive; when it goes down, derivative is negative. Use 'add_text' to show 'Derivative = 0 at peaks and valleys' at below-last. Call next_concept()."
     },
     {
       "name": "final_cheat_sheet",
-      "instructions": "Wrap up with a summary table. Use 'add_text' to congratulate the student and emphasize these rules are the foundation of Calculus. Use 'draw_table' with headers=[\"Rule\", \"Formula\"] and rows=[[\"Power Rule\", \"nx^{n-1}\"], [\"Constant\", \"0\"], [\"Linear\", \"c\"], [\"Sum Rule\", \"f'(x) + g'(x)\"]]. Call finish_lesson()."
+      "instructions": "Congratulate the student! Use 'add_text' to summarize the key rules: Power Rule: nx^(n-1), Constant: 0, Linear (cx): c, Sum: f'(x) + g'(x). Emphasize these rules are the foundation of Calculus. Call finish_lesson()."
     }
   ]
 }

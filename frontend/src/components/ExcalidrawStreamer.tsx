@@ -1,17 +1,18 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
-import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types/types";
+import { useEffect, useRef } from "react";
 import type { Room } from "livekit-client";
 
+// Using 'any' to avoid type import issues with @excalidraw/excalidraw
+type ExcalidrawAPI = any;
+
 interface StreamerProps {
-  excalidrawAPI: ExcalidrawImperativeAPI;
+  excalidrawAPI: ExcalidrawAPI;
   room: Room;
 }
 
 export function ExcalidrawStreamer({ excalidrawAPI, room }: StreamerProps) {
   const videoTrackRef = useRef<MediaStreamTrack | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  const [debugPreview, setDebugPreview] = useState<string | null>(null);
 
   useEffect(() => {
     if (!excalidrawAPI || !room) return;
@@ -38,41 +39,25 @@ export function ExcalidrawStreamer({ excalidrawAPI, room }: StreamerProps) {
           name: "whiteboard_stream",
           source: Track.Source.ScreenShare,
         });
-        console.log("[Excalidraw Stream] Published track:", publication.trackSid);
       } catch (err) {
         console.error("[Excalidraw Stream] Failed to publish:", err);
       }
 
-      // 4. Dynamically import exportToCanvas to avoid SSR issues
-      const { exportToCanvas } = await import("@excalidraw/excalidraw");
-
-      // 5. The render loop
+      // 4. The render loop - capture DOM canvas directly
       let frameCount = 0;
       const renderLoop = async () => {
         if (!isMounted) return;
 
         try {
-          const elements = excalidrawAPI.getSceneElements();
-          const appState = excalidrawAPI.getAppState();
-          const files = excalidrawAPI.getFiles();
+          // Find Excalidraw's static canvas in the DOM
+          const excalidrawCanvas = document.querySelector('.excalidraw__canvas') as HTMLCanvasElement;
 
-          // Generate a clean Canvas from Excalidraw data
-          const tempCanvas = await exportToCanvas({
-            elements,
-            appState: {
-              ...appState,
-              viewBackgroundColor: appState.viewBackgroundColor || "#ffffff",
-              exportWithDarkMode: false,
-            },
-            files,
-            getDimensions: () => ({ width: 1280, height: 720, scale: 1 }),
-          });
-
-          // Draw to our Stream Canvas
-          if (streamCtx) {
+          if (excalidrawCanvas && streamCtx) {
+            // Draw directly from Excalidraw's canvas - this is exactly what the user sees
             streamCtx.fillStyle = "#ffffff";
             streamCtx.fillRect(0, 0, streamCanvas.width, streamCanvas.height);
-            streamCtx.drawImage(tempCanvas, 0, 0, streamCanvas.width, streamCanvas.height);
+            streamCtx.drawImage(excalidrawCanvas, 0, 0, streamCanvas.width, streamCanvas.height);
+
           }
 
           // Tell the video track "I have a new frame"
@@ -80,12 +65,7 @@ export function ExcalidrawStreamer({ excalidrawAPI, room }: StreamerProps) {
             (videoTrack as any).requestFrame();
           }
 
-          // Update debug preview every 3rd frame
           frameCount++;
-          if (frameCount % 3 === 0) {
-            setDebugPreview(streamCanvas.toDataURL("image/jpeg", 0.5));
-            console.log(`[Excalidraw Stream] Frame ${frameCount}, elements: ${elements.length}`);
-          }
         } catch (err) {
           console.warn("[Excalidraw Stream] Capture error:", err);
         }
@@ -111,7 +91,6 @@ export function ExcalidrawStreamer({ excalidrawAPI, room }: StreamerProps) {
       if (intervalRef.current) clearInterval(intervalRef.current);
       if (publication && videoTrackRef.current) {
         room.localParticipant.unpublishTrack(videoTrackRef.current);
-        console.log("[Excalidraw Stream] Unpublished track");
       }
       if (streamData?.stream) {
         streamData.stream.getTracks().forEach((track) => track.stop());
@@ -119,45 +98,5 @@ export function ExcalidrawStreamer({ excalidrawAPI, room }: StreamerProps) {
     };
   }, [excalidrawAPI, room]);
 
-  return (
-    <>
-      {/* Debug preview */}
-      {debugPreview && (
-        <div
-          style={{
-            position: "fixed",
-            bottom: "20px",
-            left: "20px",
-            border: "2px solid #10b981",
-            borderRadius: "8px",
-            overflow: "hidden",
-            boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
-            zIndex: 1000,
-            backgroundColor: "#000",
-          }}
-        >
-          <div
-            style={{
-              backgroundColor: "#10b981",
-              color: "white",
-              fontSize: "10px",
-              padding: "2px 6px",
-              fontWeight: "bold",
-            }}
-          >
-            AI View (Excalidraw)
-          </div>
-          <img
-            src={debugPreview}
-            alt="AI Canvas View"
-            style={{
-              width: "200px",
-              height: "112px",
-              display: "block",
-            }}
-          />
-        </div>
-      )}
-    </>
-  );
+  return null;
 }

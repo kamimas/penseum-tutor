@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Coordinate Calibration Test</title>
+  <style>
+    body { margin: 0; font-family: monospace; }
+    #canvas {
+      width: 100vw;
+      height: 100vh;
+      background: #f0f0f0;
+      position: relative;
+    }
+    .marker {
+      position: absolute;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      color: white;
+    }
+    #info {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      background: rgba(0,0,0,0.8);
+      color: white;
+      padding: 10px;
+      border-radius: 5px;
+    }
+  </style>
+</head>
+<body>
+  <div id="canvas"></div>
+  <div id="info">
+    <div>Viewport: <span id="viewport"></span></div>
+    <div>Click to add marker</div>
+    <div>Last click: <span id="lastClick"></span></div>
+    <div>Normalized (0-1000): <span id="normalized"></span></div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const viewportSpan = document.getElementById('viewport');
+    const lastClickSpan = document.getElementById('lastClick');
+    const normalizedSpan = document.getElementById('normalized');
+
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    viewportSpan.textContent = `${vw}x${vh}`;
+
+    // Add reference grid markers at 0-1000 normalized positions
+    const testPoints = [
+      { norm: [0, 0], color: 'blue', label: '0,0' },
+      { norm: [1000, 0], color: 'green', label: '1000,0' },
+      { norm: [0, 1000], color: 'yellow', label: '0,1000' },
+      { norm: [1000, 1000], color: 'red', label: '1000,1000' },
+      { norm: [500, 500], color: 'purple', label: '500,500' },
+    ];
+
+    testPoints.forEach(({ norm, color, label }) => {
+      const x = (norm[0] / 1000) * vw;
+      const y = (norm[1] / 1000) * vh;
+      const marker = document.createElement('div');
+      marker.className = 'marker';
+      marker.style.left = `${x}px`;
+      marker.style.top = `${y}px`;
+      marker.style.background = color;
+      marker.textContent = label;
+      marker.title = `Screen: (${Math.round(x)}, ${Math.round(y)}) | Norm: (${norm[0]}, ${norm[1]})`;
+      canvas.appendChild(marker);
+    });
+
+    canvas.addEventListener('click', (e) => {
+      const x = e.clientX;
+      const y = e.clientY;
+      const normX = Math.round((x / vw) * 1000);
+      const normY = Math.round((y / vh) * 1000);
+
+      lastClickSpan.textContent = `(${x}, ${y})`;
+      normalizedSpan.textContent = `(${normX}, ${normY})`;
+
+      const marker = document.createElement('div');
+      marker.className = 'marker';
+      marker.style.left = `${x}px`;
+      marker.style.top = `${y}px`;
+      marker.style.background = 'orange';
+      marker.textContent = `${normX},${normY}`;
+      canvas.appendChild(marker);
+    });
+  </script>
+</body>
+</html>
