@@ -96,9 +96,93 @@ Available tools:
 Required in `.env`:
 - `LIVEKIT_URL` - LiveKit server WebSocket URL
 - `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` - LiveKit credentials
-- `OPENAI_API_KEY` - For Realtime API (speech)
-- `XAI_API_KEY` - For Grok LLM
+- `OPENAI_API_KEY` - For OpenAI Realtime API
+- `GOOGLE_API_KEY` - For Gemini Realtime API
 - `SERPAPI_API_KEY` - For image search
+
+## Switching Between OpenAI and Gemini
+
+The agent supports both OpenAI Realtime and Gemini Realtime models.
+
+### File Structure
+```
+agent/
+├── tutor.py                    # Main agent (currently Gemini)
+├── tutor_openai.py             # OpenAI version backup
+├── prompt_normal.txt           # Generic prompt
+├── prompt_normal_openai.txt    # OpenAI-specific prompt
+└── prompt_normal_gemini.txt    # Gemini-specific prompt (currently active)
+```
+
+### To Switch Models
+
+**Switch to Gemini:**
+1. In `tutor.py`, change imports to `from livekit.plugins import google`
+2. Change `PROMPT_NORMAL_FILE` to `prompt_normal_gemini.txt`
+3. Use `google.realtime.RealtimeModel(...)` with Gemini model name
+4. Add `GOOGLE_API_KEY` to `.env`
+
+**Switch to OpenAI:**
+1. In `tutor.py`, change imports to `from livekit.plugins import openai`
+2. Change `PROMPT_NORMAL_FILE` to `prompt_normal_openai.txt`
+3. Use `openai.realtime.RealtimeModel(...)` with OpenAI model name
+4. Add `OPENAI_API_KEY` to `.env`
+
+### OpenAI Realtime
+```python
+from livekit.plugins import openai
+from openai.types import realtime as openai_realtime
+
+session = AgentSession(
+    llm=openai.realtime.RealtimeModel(
+        model="gpt-realtime",
+        voice="ash",  # Options: ash, ballad, coral, sage, verse
+        input_audio_transcription=openai_realtime.AudioTranscription(
+            model="gpt-4o-transcribe",
+        ),
+    ),
+    allow_interruptions=True,
+)
+```
+
+### Gemini Realtime
+```python
+from livekit.plugins import google
+from google.genai import types
+
+session = AgentSession(
+    llm=google.realtime.RealtimeModel(
+        model="gemini-2.5-flash-native-audio-preview-12-2025",
+        voice="Puck",  # Star names: Puck, Charon, Kore, Aoede, Fenrir, etc.
+        input_audio_transcription=types.AudioTranscriptionConfig(),
+        # Optional tool behavior settings:
+        # tool_behavior=types.Behavior.BLOCKING,  # Wait for tool before continuing
+        # tool_response_scheduling=types.FunctionResponseScheduling.WHEN_IDLE,
+    ),
+    allow_interruptions=True,
+)
+```
+
+### Key Differences
+
+| Feature | OpenAI | Gemini |
+|---------|--------|--------|
+| Env var | `OPENAI_API_KEY` | `GOOGLE_API_KEY` |
+| Voices | ash, ballad, coral, sage, verse | Puck, Charon, Kore, Aoede, etc. |
+| Speed control | Yes (`speed=1.0`) | No |
+| Tool behavior | Manual (`manual_function_calls=True`) | Auto (`auto_tool_reply_generation=True`) |
+| Message truncation | Yes | No |
+
+### Gemini Tool Behavior Options
+
+**`tool_behavior`** - How model handles tool calls:
+- `BLOCKING` - Wait for tool response before continuing (default)
+- `NON_BLOCKING` - Continue talking while tool executes
+
+**`tool_response_scheduling`** - What happens when tool responds:
+- `SILENT` - Add to context only, no generation
+- `WHEN_IDLE` - Generate when model isn't talking (default)
+- `INTERRUPT` - Interrupt current speech and respond
 
 ## Key Implementation Notes
 

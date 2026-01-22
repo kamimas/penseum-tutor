@@ -15,8 +15,8 @@ from livekit.agents import (
     cli,
     function_tool,
 )
-from livekit.plugins import google
-from google.genai import types
+from livekit.plugins import openai
+from openai.types import realtime as openai_realtime
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -28,7 +28,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 # Load prompts from files
 PROMPT_GUIDED_FILE = Path(__file__).parent / "prompt_guided.txt"
-PROMPT_NORMAL_FILE = Path(__file__).parent / "prompt_normal_gemini.txt"  # Using Gemini-specific prompt
+PROMPT_NORMAL_FILE = Path(__file__).parent / "prompt_normal.txt"
 
 PROMPT_GUIDED = PROMPT_GUIDED_FILE.read_text() if PROMPT_GUIDED_FILE.exists() else """
 You are a tutor teaching a structured lesson. Speak English only.
@@ -241,9 +241,14 @@ async def handle_control_message(data: bytes):
 
         if msg_type == "set_speed":
             speed = message.get("speed", 1.0)
-            logger.info(f"[CONTROL] Speed control requested: {speed}x")
-            # NOTE: Gemini does not support speed control, only OpenAI does
-            logger.warning("[CONTROL] Speed control not supported with Gemini model")
+            logger.info(f"[CONTROL] Setting speed to {speed}x")
+
+            if _session and _session.llm:
+                # Update the RealtimeModel speed
+                _session.llm.update_options(speed=speed)
+                logger.info(f"[CONTROL] Speed updated successfully to {speed}x")
+            else:
+                logger.warning("[CONTROL] Cannot update speed - session or llm not available")
         else:
             logger.warning(f"[CONTROL] Unknown message type: {msg_type}")
 
@@ -304,12 +309,12 @@ async def entrypoint(ctx: JobContext):
     )
 
     session = AgentSession(
-        llm=google.realtime.RealtimeModel(
-            model="gemini-2.5-flash-native-audio-preview-09-2025",
-            voice="Charon",
-            input_audio_transcription=types.AudioTranscriptionConfig(),
-            tool_behavior=types.Behavior.BLOCKING,  # Wait for tool response before continuing
-            tool_response_scheduling=types.FunctionResponseScheduling.WHEN_IDLE,  # Respond when not talking
+        llm=openai.realtime.RealtimeModel(
+            model="gpt-realtime",
+            voice="ash",
+            input_audio_transcription=openai_realtime.AudioTranscription(
+                model="gpt-4o-transcribe",
+            ),
         ),
         allow_interruptions=True,
     )
