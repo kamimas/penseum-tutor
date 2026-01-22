@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef } from "react";
 import type { Room } from "livekit-client";
+import katex from "katex";
 import {
   SimpleDiagramInput,
   DiagramType,
@@ -185,7 +186,82 @@ function calculatePosition(
  */
 function setLastElementId(id: string): void {
   lastElementId = id;
-  console.log(`[Position] Updated lastElementId: ${id}`);
+}
+
+// ============================================
+// LATEX HELPERS
+// ============================================
+
+/**
+ * Detect if content contains LaTeX patterns
+ */
+function containsLatex(text: string): boolean {
+  // Common LaTeX patterns
+  const patterns = [
+    /\$[^$]+\$/,           // Inline math: $...$
+    /\$\$[^$]+\$\$/,       // Display math: $$...$$
+    /\\frac\{/,            // \frac{}{}
+    /\\sqrt\{/,            // \sqrt{}
+    /\\sum/,               // \sum
+    /\\int/,               // \int
+    /\\[a-zA-Z]+\{/,       // Any \command{
+    /\^{[^}]+}/,           // Superscript: ^{...}
+    /_{[^}]+}/,            // Subscript: _{...}
+    /\\alpha|\\beta|\\gamma|\\delta|\\theta|\\pi|\\sigma|\\omega/i, // Greek letters
+    /\\rightarrow|\\leftarrow|\\Rightarrow|\\Leftarrow/,  // Arrows
+    /\\times|\\div|\\pm|\\neq|\\leq|\\geq|\\approx/,      // Math operators
+  ];
+
+  return patterns.some(pattern => pattern.test(text));
+}
+
+/**
+ * Render LaTeX content to SVG data URL
+ */
+function renderLatexToSvg(content: string, fontSize: number): { svg: string; width: number; height: number } {
+  // Strip outer $ delimiters if present
+  let latex = content.trim();
+  if (latex.startsWith("$$") && latex.endsWith("$$")) {
+    latex = latex.slice(2, -2);
+  } else if (latex.startsWith("$") && latex.endsWith("$")) {
+    latex = latex.slice(1, -1);
+  }
+
+  // Render with KaTeX using MathML output (self-contained, no external fonts needed)
+  const mathml = katex.renderToString(latex, {
+    throwOnError: false,
+    displayMode: latex.includes("\\frac") || latex.includes("\\sum") || latex.includes("\\int"),
+    output: "mathml",
+  });
+
+  // Create a temporary element to measure
+  const container = document.createElement("div");
+  container.innerHTML = mathml;
+  container.style.position = "absolute";
+  container.style.visibility = "hidden";
+  container.style.fontSize = `${fontSize}px`;
+  document.body.appendChild(container);
+
+  const rect = container.getBoundingClientRect();
+  const width = Math.ceil(rect.width) + 20; // Add padding
+  const height = Math.ceil(rect.height) + 10;
+
+  document.body.removeChild(container);
+
+  // Create SVG with MathML content (no foreignObject needed, MathML is native SVG)
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+      <foreignObject width="100%" height="100%">
+        <div xmlns="http://www.w3.org/1999/xhtml" style="font-size: ${fontSize}px; color: #1e1e1e;">
+          ${mathml}
+        </div>
+      </foreignObject>
+    </svg>
+  `;
+
+  const dataUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
+
+  return { svg: dataUrl, width, height };
 }
 
 // ============================================
@@ -194,7 +270,6 @@ function setLastElementId(id: string): void {
 
 function handleClearBoard(excalidrawAPI: ExcalidrawAPI): void {
   excalidrawAPI.resetScene();
-  console.log("[clear_board] Canvas reset");
 }
 
 // Measure text dimensions using canvas
@@ -230,12 +305,19 @@ function handleAddText(
   const { content = "", size = "medium", position = "center" } = params;
 
   if (!content) {
-    console.warn("[add_text] No content provided");
     return;
   }
 
-  const elements = excalidrawAPI.getSceneElements();
   const fontSize = getFontSize(size);
+
+  // Check if content contains LaTeX - render as image if so
+  if (containsLatex(content)) {
+    handleAddLatex(excalidrawAPI, content, fontSize, position as PositionType);
+    return;
+  }
+
+  // Regular text rendering
+  const elements = excalidrawAPI.getSceneElements();
   const fontFamily = 1; // Virgil (hand-drawn style)
 
   // Measure text dimensions
@@ -295,8 +377,132 @@ function handleAddText(
 
   // Track for relative positioning
   setLastElementId(elementId);
+}
 
-  console.log(`[add_text] Added "${content.substring(0, 50)}..." at position="${position}" (${posX.toFixed(0)}, ${posY.toFixed(0)}), size: ${width.toFixed(0)}x${height.toFixed(0)}`);
+/**
+ * Handle LaTeX content by rendering to SVG and adding as image
+ */
+function handleAddLatex(
+  excalidrawAPI: ExcalidrawAPI,
+  content: string,
+  fontSize: number,
+  position: PositionType
+): void {
+  try {
+    const { svg: dataUrl, width, height } = renderLatexToSvg(content, fontSize);
+    const elements = excalidrawAPI.getSceneElements();
+
+    // Calculate position
+    const { x: posX, y: posY } = calculatePosition(
+      excalidrawAPI,
+      position,
+      width,
+      height
+    );
+
+    const elementId = generateId();
+    const fileId = generateId();
+
+    const imageElement = {
+      id: elementId,
+      type: "image" as const,
+      x: posX,
+      y: posY,
+      width: width,
+      height: height,
+      angle: 0,
+      strokeColor: "transparent",
+      backgroundColor: "transparent",
+      fillStyle: "solid" as const,
+      strokeWidth: 0,
+      strokeStyle: "solid" as const,
+      roughness: 0,
+      opacity: 100,
+      groupIds: [],
+      frameId: null,
+      index: "a0" as const,
+      roundness: null,
+      seed: Math.floor(Math.random() * 100000),
+      version: 1,
+      versionNonce: Math.floor(Math.random() * 100000),
+      isDeleted: false,
+      boundElements: null,
+      updated: Date.now(),
+      link: null,
+      locked: false,
+      fileId,
+      status: "saved" as const,
+      scale: [1, 1] as [number, number],
+    };
+
+    excalidrawAPI.updateScene({
+      elements: [...elements, imageElement],
+    });
+
+    // Add SVG file to Excalidraw
+    excalidrawAPI.addFiles([
+      {
+        id: fileId,
+        dataURL: dataUrl,
+        mimeType: "image/svg+xml",
+        created: Date.now(),
+        lastRetrieved: Date.now(),
+      },
+    ]);
+
+    setLastElementId(elementId);
+  } catch (error) {
+    console.error("[handleAddLatex] Failed to render LaTeX:", error);
+    // Fallback to plain text if LaTeX rendering fails
+    const elements = excalidrawAPI.getSceneElements();
+    const fontFamily = 1;
+    const { width, height } = measureText(content, fontSize, fontFamily);
+    const { x: posX, y: posY } = calculatePosition(excalidrawAPI, position, width, height);
+
+    const elementId = generateId();
+    const textElement = {
+      id: elementId,
+      type: "text" as const,
+      x: posX,
+      y: posY,
+      width,
+      height,
+      angle: 0,
+      strokeColor: "#1e1e1e",
+      backgroundColor: "transparent",
+      fillStyle: "solid" as const,
+      strokeWidth: 2,
+      strokeStyle: "solid" as const,
+      roughness: 1,
+      opacity: 100,
+      groupIds: [],
+      frameId: null,
+      index: "a0" as const,
+      roundness: null,
+      seed: Math.floor(Math.random() * 100000),
+      version: 1,
+      versionNonce: Math.floor(Math.random() * 100000),
+      isDeleted: false,
+      boundElements: null,
+      updated: Date.now(),
+      link: null,
+      locked: false,
+      text: content,
+      fontSize,
+      fontFamily,
+      textAlign: "left" as const,
+      verticalAlign: "top" as const,
+      containerId: null,
+      originalText: content,
+      autoResize: true,
+      lineHeight: 1.25,
+    };
+
+    excalidrawAPI.updateScene({
+      elements: [...elements, textElement],
+    });
+    setLastElementId(elementId);
+  }
 }
 
 async function handleShowImage(
@@ -315,16 +521,13 @@ async function handleShowImage(
       if (data.dataUrl) {
         dataUrl = data.dataUrl;
       } else if (data.error) {
-        console.warn(`[show_image] API error: ${data.error}`);
         handleAddText(excalidrawAPI, { content: `[Image: ${query}]`, size: "medium", position });
         return;
       } else {
-        console.warn(`[show_image] No image found for query: ${query}`);
         handleAddText(excalidrawAPI, { content: `[Image: ${query}]`, size: "medium", position });
         return;
       }
-    } catch (error) {
-      console.error(`[show_image] Search failed:`, error);
+    } catch {
       handleAddText(excalidrawAPI, { content: `[Image: ${query}]`, size: "medium", position });
       return;
     }
@@ -338,15 +541,13 @@ async function handleShowImage(
         reader.onloadend = () => resolve(reader.result as string);
         reader.readAsDataURL(blob);
       });
-    } catch (error) {
-      console.error(`[show_image] Failed to fetch URL:`, error);
+    } catch {
       handleAddText(excalidrawAPI, { content: `[Image failed to load]`, size: "medium", position });
       return;
     }
   }
 
   if (!dataUrl) {
-    console.warn(`[show_image] No URL or query provided`);
     return;
   }
 
@@ -416,8 +617,9 @@ async function handleShowImage(
       elements: [...elements, imageElement],
     });
 
-    // Add file to Excalidraw
-    const mimeType = blob.type || "image/png";
+    // Add file to Excalidraw - extract mimeType from dataUrl (format: data:image/jpeg;base64,...)
+    const mimeMatch = dataUrl.match(/^data:([^;]+);/);
+    const mimeType = mimeMatch ? mimeMatch[1] : "image/png";
     excalidrawAPI.addFiles([
       {
         id: fileId,
@@ -430,10 +632,7 @@ async function handleShowImage(
 
     // Track for relative positioning
     setLastElementId(elementId);
-
-    console.log(`[show_image] Added image at position="${position}" (${posX.toFixed(0)}, ${posY.toFixed(0)}), size: ${width.toFixed(0)}x${height.toFixed(0)}`);
-  } catch (error) {
-    console.error(`[show_image] Failed to load image:`, error);
+  } catch {
     handleAddText(excalidrawAPI, { content: `[Image failed: ${query || url}]`, size: "medium", position });
   }
 }
@@ -454,7 +653,6 @@ function handleDrawDiagram(
   const { type = "flowchart", nodes = [], edges, direction = "TB", position = "center" } = params;
 
   if (!nodes || nodes.length === 0) {
-    console.warn("[draw_diagram] No nodes provided");
     return;
   }
 
@@ -762,8 +960,6 @@ function handleDrawDiagram(
 
   // Track for relative positioning (use group ID so we can compute bounds from all group elements)
   setLastElementId(`group:${groupId}`);
-
-  console.log(`[draw_diagram] Animating ${type} diagram at position="${position}": ${animationQueue.length} elements over ${currentDelay}ms`);
 }
 
 // ============================================
@@ -775,8 +971,6 @@ function handleToolCall(
   toolName: string,
   params: ToolParams
 ): void {
-  console.log(`[handleToolCall] Tool: ${toolName}, Params:`, params);
-
   switch (toolName) {
     case "clear_board":
       handleClearBoard(excalidrawAPI);
@@ -794,15 +988,13 @@ function handleToolCall(
     // Tools not implemented for Excalidraw yet
     case "draw_table":
     case "plot_function":
-      console.warn(`[handleToolCall] Tool "${toolName}" not implemented for Excalidraw yet`);
       break;
     // Lesson control tools (no canvas action needed)
     case "next_concept":
     case "finish_lesson":
-      console.log(`[handleToolCall] Lesson control tool: ${toolName}`);
       break;
     default:
-      console.warn(`[handleToolCall] Unknown tool: ${toolName}`);
+      break;
   }
 }
 
@@ -829,44 +1021,32 @@ export function ExcalidrawToolHandler({ excalidrawAPI, room }: ExcalidrawToolHan
   useEffect(() => {
     if (!room || !excalidrawAPI) return;
 
-    console.log("[ExcalidrawToolHandler] Listening for tool calls on 'tutor_draw' topic");
-    console.log("[ExcalidrawToolHandler] Room state:", room.state);
-    console.log("[ExcalidrawToolHandler] Room name:", room.name);
-
     const handleData = (
       payload: Uint8Array,
-      participant?: any,
+      _participant?: any,
       _kind?: any,
       topic?: string
     ) => {
-      console.log(`[ExcalidrawToolHandler] Data received! Topic: "${topic}", From: ${participant?.identity || 'unknown'}`);
-
       if (!topic || topic !== "tutor_draw") {
-        console.log(`[ExcalidrawToolHandler] Ignoring non-tutor_draw topic: "${topic}"`);
         return;
       }
 
       try {
         const str = new TextDecoder().decode(payload);
-        console.log("[ExcalidrawToolHandler] Raw payload:", str);
         const msg = JSON.parse(str);
-        console.log("[ExcalidrawToolHandler] Parsed message:", msg);
 
         if (msg.tool && typeof msg.tool === "string") {
-          console.log(`[ExcalidrawToolHandler] Executing tool: ${msg.tool}`);
           handleToolCall(excalidrawAPIRef.current, msg.tool, msg.params || {});
         }
-      } catch (error) {
-        console.error("[ExcalidrawToolHandler] Error processing message:", error);
+      } catch {
+        // Ignore parse errors
       }
     };
 
     room.on("dataReceived", handleData);
-    console.log("[ExcalidrawToolHandler] Event listener attached");
 
     return () => {
       room.off("dataReceived", handleData);
-      console.log("[ExcalidrawToolHandler] Event listener removed");
     };
   }, [room, excalidrawAPI]);
 

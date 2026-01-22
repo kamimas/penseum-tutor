@@ -19,8 +19,6 @@ async function loadPDFJS() {
     return (window as any).pdfjsLib;
   }
 
-  console.log('[PDF] Loading PDF.js from CDN...');
-
   // Load PDF.js library from CDN
   return new Promise((resolve, reject) => {
     const script = document.createElement('script');
@@ -31,7 +29,6 @@ async function loadPDFJS() {
         // Set worker
         pdfjsLib.GlobalWorkerOptions.workerSrc =
           'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-        console.log('[PDF] PDF.js loaded successfully');
         resolve(pdfjsLib);
       } else {
         reject(new Error('PDF.js failed to load'));
@@ -55,27 +52,21 @@ export async function convertPDFToImages(
 ): Promise<PDFPageImage[]> {
   const { scale = 1.5, maxWidth = 800, maxHeight = 1000 } = options;
 
-  console.log('[PDF Convert] Starting conversion:', file.name);
-
   // Load PDF.js
   const pdfjsLib = await loadPDFJS();
 
   // Read file as array buffer
   const arrayBuffer = await file.arrayBuffer();
-  console.log('[PDF Convert] File read, loading document...');
 
   // Load PDF document
   const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
   const pdf = await loadingTask.promise;
   const numPages = pdf.numPages;
 
-  console.log(`[PDF Convert] Document loaded, ${numPages} pages`);
-
   const pages: PDFPageImage[] = [];
 
   // Process each page
   for (let pageNum = 1; pageNum <= numPages; pageNum++) {
-    console.log(`[PDF Convert] Processing page ${pageNum}/${numPages}...`);
 
     const page = await pdf.getPage(pageNum);
 
@@ -116,11 +107,8 @@ export async function convertPDFToImages(
       width: viewport.width,
       height: viewport.height,
     });
-
-    console.log(`[PDF Convert] Page ${pageNum} converted`);
   }
 
-  console.log('[PDF Convert] All pages converted successfully');
   return pages;
 }
 

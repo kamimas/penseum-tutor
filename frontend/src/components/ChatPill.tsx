@@ -108,17 +108,6 @@ export function ChatPill({ onReset }: ChatPillProps) {
   const [currentSpeed, setCurrentSpeed] = useState<number>(1);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // DEBUG: Log transcription identities
-  useEffect(() => {
-    if (!allTranscriptions || allTranscriptions.length === 0) return;
-    console.log("[ChatPill] Transcriptions received:", allTranscriptions.length);
-    console.log("[ChatPill] Local identity:", localParticipant?.identity);
-    console.log("[ChatPill] Agent identity:", agent?.identity);
-    allTranscriptions.forEach((t, i) => {
-      console.log(`[ChatPill] [${i}] identity="${t.participantInfo.identity}" text="${t.text.slice(0, 40)}..."`);
-    });
-  }, [allTranscriptions, localParticipant?.identity, agent?.identity]);
-
   // Process transcriptions from useTranscriptions (TextStream-based)
   // These update in real-time as text streams in - we UPDATE existing messages
   useEffect(() => {
@@ -219,8 +208,8 @@ export function ChatPill({ onReset }: ChatPillProps) {
   const handleEndSession = useCallback(async () => {
     try {
       await room.disconnect();
-    } catch (e) {
-      console.error("Error disconnecting:", e);
+    } catch {
+      // Ignore disconnect errors
     }
     onReset();
   }, [room, onReset]);
@@ -239,7 +228,6 @@ export function ChatPill({ onReset }: ChatPillProps) {
       new TextEncoder().encode(payload),
       { reliable: true, topic: "tutor_control" }
     );
-    console.log(`[ChatPill] Speed changed to ${newSpeed}x`);
   }, [currentSpeed, room.localParticipant]);
 
   // Status text

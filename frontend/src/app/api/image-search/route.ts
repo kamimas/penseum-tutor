@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
     url.searchParams.set("api_key", apiKey);
     url.searchParams.set("engine", "google_images");
     url.searchParams.set("q", query);
-    url.searchParams.set("num", "5"); // Get a few results in case some fail
+    url.searchParams.set("num", "2"); // Get a couple results in case first fails
     url.searchParams.set("safe", "active");
 
     const response = await fetch(url.toString());
@@ -61,7 +61,6 @@ export async function GET(request: NextRequest) {
         });
 
         if (!imageResponse.ok) {
-          console.log(`Failed to fetch image: ${imageUrl}, trying next...`);
           continue;
         }
 
@@ -76,8 +75,7 @@ export async function GET(request: NextRequest) {
           width: image.original_width,
           height: image.original_height,
         });
-      } catch (fetchError) {
-        console.log(`Error fetching image, trying next:`, fetchError);
+      } catch {
         continue;
       }
     }
@@ -87,8 +85,7 @@ export async function GET(request: NextRequest) {
       { error: "Failed to fetch any images" },
       { status: 500 }
     );
-  } catch (error) {
-    console.error("Image search error:", error);
+  } catch {
     return NextResponse.json(
       { error: "Failed to search for images" },
       { status: 500 }

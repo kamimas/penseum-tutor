@@ -54,11 +54,8 @@ export function TutorCursor({ excalidrawAPI }: TutorCursorProps) {
    */
   const updateCursorPosition = useCallback((x: number, y: number) => {
     if (!excalidrawAPI) {
-      console.log("[TutorCursor] No excalidrawAPI");
       return;
     }
-
-    console.log(`[TutorCursor] Setting cursor at (${x.toFixed(0)}, ${y.toFixed(0)})`);
 
     const collaborators = new Map<SocketId, Collaborator>();
     collaborators.set(TUTOR_SOCKET_ID, {
@@ -74,10 +71,6 @@ export function TutorCursor({ excalidrawAPI }: TutorCursorProps) {
     });
 
     excalidrawAPI.updateScene({ collaborators });
-
-    // Verify it was set
-    const appState = excalidrawAPI.getAppState();
-    console.log("[TutorCursor] Collaborators after update:", appState.collaborators);
   }, [excalidrawAPI]);
 
   /**
@@ -158,16 +151,12 @@ export function TutorCursor({ excalidrawAPI }: TutorCursorProps) {
    */
   useEffect(() => {
     if (!excalidrawAPI) {
-      console.log("[TutorCursor] Waiting for excalidrawAPI...");
       return;
     }
-
-    console.log("[TutorCursor] excalidrawAPI available, initializing...");
 
     // Initialize cursor position
     if (!isInitializedRef.current) {
       const initialPos = getContentBottomRight();
-      console.log("[TutorCursor] Initial content position:", initialPos);
 
       if (initialPos) {
         currentPosRef.current = initialPos;
@@ -175,15 +164,8 @@ export function TutorCursor({ excalidrawAPI }: TutorCursorProps) {
       } else {
         // Default to center of viewport
         const appState = excalidrawAPI.getAppState();
-        console.log("[TutorCursor] AppState:", {
-          scrollX: appState.scrollX,
-          scrollY: appState.scrollY,
-          width: appState.width,
-          height: appState.height
-        });
         const centerX = -appState.scrollX + (appState.width || 800) / 2;
         const centerY = -appState.scrollY + (appState.height || 600) / 2;
-        console.log("[TutorCursor] Defaulting to center:", { centerX, centerY });
         currentPosRef.current = { x: centerX, y: centerY };
         updateCursorPosition(centerX, centerY);
       }

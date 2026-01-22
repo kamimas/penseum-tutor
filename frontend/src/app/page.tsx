@@ -420,7 +420,6 @@ export default function Page() {
     // Room name format: penseum-{mode}-{timestamp}
     const newRoomId = `penseum-${selectedMode}-${Date.now()}`;
     setRoomId(newRoomId);
-    console.log(`[Mode] Selected: ${selectedMode}, Room: ${newRoomId}`);
   }, []);
 
   // Fetch token when roomId changes (after mode selection)
@@ -435,7 +434,6 @@ export default function Page() {
     if (mode) {
       const newRoomId = `penseum-${mode}-${Date.now()}`;
       setRoomId(newRoomId);
-      console.log(`[Reset] New room: ${newRoomId}`);
     }
   }, [mode]);
 

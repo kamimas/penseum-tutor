@@ -50,8 +50,8 @@ export function IntelligenceDock({ onReset }: { onReset: () => void }) {
   const handleEndSession = useCallback(async () => {
     try {
       await room.disconnect();
-    } catch (e) {
-      console.error("Error disconnecting:", e);
+    } catch {
+      // Ignore disconnect errors
     }
     onReset();
   }, [room, onReset]);

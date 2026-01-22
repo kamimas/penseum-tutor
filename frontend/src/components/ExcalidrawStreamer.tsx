@@ -39,8 +39,8 @@ export function ExcalidrawStreamer({ excalidrawAPI, room }: StreamerProps) {
           name: "whiteboard_stream",
           source: Track.Source.ScreenShare,
         });
-      } catch (err) {
-        console.error("[Excalidraw Stream] Failed to publish:", err);
+      } catch {
+        // Failed to publish track
       }
 
       // 4. The render loop - capture DOM canvas directly
@@ -66,8 +66,8 @@ export function ExcalidrawStreamer({ excalidrawAPI, room }: StreamerProps) {
           }
 
           frameCount++;
-        } catch (err) {
-          console.warn("[Excalidraw Stream] Capture error:", err);
+        } catch {
+          // Capture error
         }
       };
 
