@@ -305,41 +305,52 @@ async function handleShowImage(
 ): Promise<void> {
   const { query, url, position = "center" } = params;
 
-  let imageUrl = url || "";
+  let dataUrl = "";
 
-  // If query is provided, search for the image
+  // If query is provided, search for the image (API returns base64 dataUrl)
   if (query && !url) {
     try {
       const response = await fetch(`/api/image-search?q=${encodeURIComponent(query)}`);
       const data = await response.json();
-      if (data.url) {
-        imageUrl = data.url;
+      if (data.dataUrl) {
+        dataUrl = data.dataUrl;
+      } else if (data.error) {
+        console.warn(`[show_image] API error: ${data.error}`);
+        handleAddText(excalidrawAPI, { content: `[Image: ${query}]`, size: "medium", position });
+        return;
       } else {
         console.warn(`[show_image] No image found for query: ${query}`);
-        handleAddText(excalidrawAPI, { content: `[Image: ${query}]`, size: "medium" });
+        handleAddText(excalidrawAPI, { content: `[Image: ${query}]`, size: "medium", position });
         return;
       }
     } catch (error) {
       console.error(`[show_image] Search failed:`, error);
-      handleAddText(excalidrawAPI, { content: `[Image: ${query}]`, size: "medium" });
+      handleAddText(excalidrawAPI, { content: `[Image: ${query}]`, size: "medium", position });
+      return;
+    }
+  } else if (url) {
+    // If URL is provided directly, try to fetch it (may fail due to CORS)
+    try {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      dataUrl = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(blob);
+      });
+    } catch (error) {
+      console.error(`[show_image] Failed to fetch URL:`, error);
+      handleAddText(excalidrawAPI, { content: `[Image failed to load]`, size: "medium", position });
       return;
     }
   }
 
-  if (!imageUrl) {
+  if (!dataUrl) {
     console.warn(`[show_image] No URL or query provided`);
     return;
   }
 
   try {
-    // Fetch the image and convert to data URL
-    const response = await fetch(imageUrl);
-    const blob = await response.blob();
-    const dataUrl = await new Promise<string>((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.readAsDataURL(blob);
-    });
 
     // Get image dimensions
     const img = new Image();
