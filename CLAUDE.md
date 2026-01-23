@@ -97,8 +97,72 @@ Required in `.env`:
 - `LIVEKIT_URL` - LiveKit server WebSocket URL
 - `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` - LiveKit credentials
 - `OPENAI_API_KEY` - For OpenAI Realtime API
-- `GOOGLE_API_KEY` - For Gemini Realtime API
+- `GOOGLE_API_KEY` - For Gemini Realtime API and Draw Sub-Agent
 - `SERPAPI_API_KEY` - For image search
+
+## Agent Orchestration Architecture
+
+The system uses **agent orchestration** where the realtime agent delegates drawing tasks to a specialized sub-agent.
+
+### Architecture Flow
+
+```
+Realtime Agent (Gemini Realtime)
+  - Handles voice conversation
+  - Tool: draw(query)  [simplified, low-latency]
+  ↓
+Draw Sub-Agent (Gemini 3 Flash)
+  - Receives natural language query
+  - Decides which drawing tools to use
+  - Tools: add_text, show_image, draw_diagram
+  - Returns tool calls as JSON
+  ↓
+Backend publishes to LiveKit data channel
+  ↓
+Frontend renders on canvas
+```
+
+### Benefits
+
+1. **Low Latency**: Realtime agent has simple tools, responds fast
+2. **Better Decisions**: Sub-agent is more capable (Gemini 3), uses structured prompts
+3. **Separation of Concerns**: Conversation ≠ Visual rendering logic
+4. **Scalability**: Can add more specialized sub-agents (video, audio, etc.)
+
+### Files
+
+```
+agent/
+├── tutor.py              # Main realtime agent
+├── draw_subagent.py      # Draw sub-agent (Gemini 3 Flash)
+└── ...
+
+frontend/
+├── src/app/api/draw/route.ts     # API endpoint for sub-agent
+├── src/app/test-draw/page.tsx    # Test page (no LiveKit)
+└── ...
+```
+
+### Testing Draw Sub-Agent
+
+**Standalone CLI:**
+```bash
+cd agent
+source venv/bin/activate
+python draw_subagent.py "draw a red car on a hill"
+```
+
+**Test Page (no LiveKit):**
+```
+http://localhost:3000/test-draw
+```
+
+**Sub-Agent Prompt Structure:**
+- Clear tool descriptions (PURPOSE, WHEN TO USE, WHEN NOT TO USE)
+- Decision framework (3-step process)
+- Rich examples with reasoning
+- Critical rules (ALWAYS/NEVER statements)
+- Edge case handling
 
 ## Switching Between OpenAI and Gemini
 
