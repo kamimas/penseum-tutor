@@ -10,9 +10,39 @@ interface StreamerProps {
   room: Room;
 }
 
+// Get dimensions that match source aspect ratio, capped for bandwidth
+function getStreamDimensions(sourceWidth: number, sourceHeight: number) {
+  const MAX_WIDTH = 1920;
+  const MAX_HEIGHT = 1080;
+
+  let width = sourceWidth;
+  let height = sourceHeight;
+
+  // Scale down if too large (preserving aspect ratio)
+  if (width > MAX_WIDTH) {
+    height = Math.round(height * (MAX_WIDTH / width));
+    width = MAX_WIDTH;
+  }
+  if (height > MAX_HEIGHT) {
+    width = Math.round(width * (MAX_HEIGHT / height));
+    height = MAX_HEIGHT;
+  }
+
+  // Ensure dimensions are even (required for some video codecs)
+  width = Math.floor(width / 2) * 2;
+  height = Math.floor(height / 2) * 2;
+
+  // Minimum size for very small screens
+  width = Math.max(width, 320);
+  height = Math.max(height, 240);
+
+  return { width, height };
+}
+
 export function ExcalidrawStreamer({ excalidrawAPI, room }: StreamerProps) {
   const videoTrackRef = useRef<MediaStreamTrack | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const streamCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
     if (!excalidrawAPI || !room) return;
@@ -21,10 +51,14 @@ export function ExcalidrawStreamer({ excalidrawAPI, room }: StreamerProps) {
     let isMounted = true;
 
     const setup = async () => {
-      // 1. Create a "Virtual" Canvas to stream from
+      // 1. Create a "Virtual" Canvas to stream from (will be resized dynamically)
       const streamCanvas = document.createElement("canvas");
-      streamCanvas.width = 1280;
-      streamCanvas.height = 720;
+      streamCanvasRef.current = streamCanvas;
+
+      // Start with window size, will adjust on first frame
+      const initial = getStreamDimensions(window.innerWidth, window.innerHeight);
+      streamCanvas.width = initial.width;
+      streamCanvas.height = initial.height;
       const streamCtx = streamCanvas.getContext("2d");
 
       // 2. Create the Video Stream (0 FPS initially, we push frames manually)
@@ -44,7 +78,6 @@ export function ExcalidrawStreamer({ excalidrawAPI, room }: StreamerProps) {
       }
 
       // 4. The render loop - capture DOM canvas directly
-      let frameCount = 0;
       const renderLoop = async () => {
         if (!isMounted) return;
 
@@ -53,19 +86,27 @@ export function ExcalidrawStreamer({ excalidrawAPI, room }: StreamerProps) {
           const excalidrawCanvas = document.querySelector('.excalidraw__canvas') as HTMLCanvasElement;
 
           if (excalidrawCanvas && streamCtx) {
-            // Draw directly from Excalidraw's canvas - this is exactly what the user sees
+            // Update stream canvas size to match source (handles resize/rotation)
+            const { width: newWidth, height: newHeight } = getStreamDimensions(
+              excalidrawCanvas.width,
+              excalidrawCanvas.height
+            );
+
+            if (streamCanvas.width !== newWidth || streamCanvas.height !== newHeight) {
+              streamCanvas.width = newWidth;
+              streamCanvas.height = newHeight;
+            }
+
+            // Draw directly from Excalidraw's canvas - preserving aspect ratio
             streamCtx.fillStyle = "#ffffff";
             streamCtx.fillRect(0, 0, streamCanvas.width, streamCanvas.height);
             streamCtx.drawImage(excalidrawCanvas, 0, 0, streamCanvas.width, streamCanvas.height);
-
           }
 
           // Tell the video track "I have a new frame"
           if (videoTrack && "requestFrame" in videoTrack) {
             (videoTrack as any).requestFrame();
           }
-
-          frameCount++;
         } catch {
           // Capture error
         }
@@ -88,6 +129,7 @@ export function ExcalidrawStreamer({ excalidrawAPI, room }: StreamerProps) {
 
     return () => {
       isMounted = false;
+      streamCanvasRef.current = null;
       if (intervalRef.current) clearInterval(intervalRef.current);
       if (publication && videoTrackRef.current) {
         room.localParticipant.unpublishTrack(videoTrackRef.current);

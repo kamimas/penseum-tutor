@@ -14,22 +14,28 @@ import { ChatPill } from "../components/ChatPill";
 import { TutorCursor } from "../components/TutorCursor";
 import { LeftNavigation } from "../components/LeftNavigation";
 
+// Hook to detect mobile viewport
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    checkMobile();
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
+  }, []);
+
+  return isMobile;
+}
+
 // Dynamic import - Excalidraw doesn't support SSR
 const Excalidraw = dynamic(
   async () => (await import("@excalidraw/excalidraw")).Excalidraw,
   { ssr: false, loading: () => <div style={{ padding: 40 }}>Loading canvas...</div> }
 );
 
-// Position options for testing
-const POSITIONS = [
-  "top-left", "top-center", "top-right",
-  "middle-left", "center", "middle-right",
-  "bottom-left", "bottom-center", "bottom-right",
-  "below-last", "right-of-last"
-] as const;
-
-// Minimal custom toolbar - matches ChatPill aesthetic
-function MinimalToolbar({ excalidrawAPI }: { excalidrawAPI: any }) {
+// Minimal custom toolbar - responsive: horizontal top-center on desktop, vertical right on mobile
+function MinimalToolbar({ excalidrawAPI, isMobile }: { excalidrawAPI: any; isMobile: boolean }) {
   const [activeTool, setActiveTool] = useState<string>("freedraw");
 
   const tools = [
@@ -74,6 +80,52 @@ function MinimalToolbar({ excalidrawAPI }: { excalidrawAPI: any }) {
 
   if (!excalidrawAPI) return null;
 
+  // Mobile: vertical on right side above ChatPill
+  if (isMobile) {
+    return (
+      <div
+        style={{
+          position: "fixed",
+          right: 16,
+          bottom: 100,
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+          background: "#FAF9F7",
+          borderRadius: 16,
+          padding: "10px",
+          boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
+          border: "1px solid #E8E4DE",
+          zIndex: 100,
+        }}
+      >
+        {tools.map((tool) => (
+          <button
+            key={tool.id}
+            onClick={() => handleToolClick(tool.id)}
+            title={tool.label}
+            style={{
+              width: 44,
+              height: 44,
+              borderRadius: 12,
+              border: activeTool === tool.id ? "1px solid #E2DAFB" : "1px solid transparent",
+              background: activeTool === tool.id ? "#F1EDFD" : "transparent",
+              color: activeTool === tool.id ? "#6F47EB" : "#999",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              transition: "all 0.15s ease",
+            }}
+          >
+            {tool.icon}
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  // Desktop: horizontal at top center
   return (
     <div
       style={{
@@ -117,119 +169,14 @@ function MinimalToolbar({ excalidrawAPI }: { excalidrawAPI: any }) {
   );
 }
 
-// Debug Test Panel for manual tool testing
-function DebugPanel({ excalidrawAPI }: { excalidrawAPI: any }) {
-  const [showPanel, setShowPanel] = useState(false);
-  const [selectedPosition, setSelectedPosition] = useState<string>("center");
-
-  const testAddText = (content: string, size: "small" | "medium" | "large", position?: string) => {
-    if (!excalidrawAPI) return;
-    const pos = position || selectedPosition;
-    triggerToolCall(excalidrawAPI, "add_text", { content, size, position: pos });
-  };
-
-  // Toggle with Cmd+D
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "d") {
-        e.preventDefault();
-        setShowPanel((prev) => !prev);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
-
-  if (!showPanel) return null;
-
-  const btnStyle: React.CSSProperties = {
-    padding: "6px 10px",
-    borderRadius: 6,
-    border: "1px solid #e5e7eb",
-    background: "#f9fafb",
-    cursor: "pointer",
-    fontSize: 12,
-  };
-
-  return (
-    <div
-      style={{
-        position: "fixed",
-        top: 20,
-        right: 20,
-        width: 280,
-        background: "white",
-        borderRadius: 12,
-        boxShadow: "0 4px 20px rgba(0,0,0,0.15)",
-        padding: 16,
-        zIndex: 1001,
-        fontFamily: "system-ui, sans-serif",
-        fontSize: 13,
-      }}
-    >
-      <div style={{ fontWeight: 600, marginBottom: 12 }}>Position Test (Cmd+D to toggle)</div>
-
-      {/* Position selector */}
-      <div style={{ marginBottom: 12 }}>
-        <select
-          value={selectedPosition}
-          onChange={(e) => setSelectedPosition(e.target.value)}
-          style={{
-            width: "100%",
-            padding: "6px 10px",
-            borderRadius: 6,
-            border: "1px solid #e5e7eb",
-            fontSize: 12,
-            marginBottom: 8,
-          }}
-        >
-          {POSITIONS.map((pos) => (
-            <option key={pos} value={pos}>{pos}</option>
-          ))}
-        </select>
-      </div>
-
-      {/* Quick position grid */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 4, marginBottom: 8 }}>
-        {["top-left", "top-center", "top-right", "middle-left", "center", "middle-right", "bottom-left", "bottom-center", "bottom-right"].map((pos) => (
-          <button
-            key={pos}
-            onClick={() => testAddText("X", "large", pos)}
-            style={{ ...btnStyle, fontSize: 10, padding: "4px 2px" }}
-          >
-            {pos.replace("top-", "T").replace("middle-", "M").replace("bottom-", "B").replace("-left", "L").replace("-center", "C").replace("-right", "R")}
-          </button>
-        ))}
-      </div>
-
-      {/* Relative positions */}
-      <div style={{ display: "flex", gap: 4 }}>
-        <button onClick={() => testAddText("↓", "medium", "below-last")} style={{ ...btnStyle, flex: 1 }}>
-          below-last
-        </button>
-        <button onClick={() => testAddText("→", "medium", "right-of-last")} style={{ ...btnStyle, flex: 1 }}>
-          right-of-last
-        </button>
-      </div>
-
-      {/* Clear */}
-      <button
-        onClick={() => triggerToolCall(excalidrawAPI, "clear_board", {})}
-        style={{ ...btnStyle, background: "#ef4444", color: "white", width: "100%", marginTop: 8 }}
-      >
-        Clear Board
-      </button>
-    </div>
-  );
-}
-
 // Inner component - has access to LiveKit room context
 function ExcalidrawRoom({ onReset }: { onReset: () => void }) {
   const room = useRoomContext();
   const [excalidrawAPI, setExcalidrawAPI] = useState<any>(null);
+  const isMobile = useIsMobile();
 
   return (
-    <div style={{ width: "100vw", height: "100vh" }}>
+    <div style={{ width: "100vw", height: "100dvh" }}>
       {/* Hide all Excalidraw UI - we use our own toolbar */}
       <style>{`
         .excalidraw .App-menu,
@@ -248,8 +195,24 @@ function ExcalidrawRoom({ onReset }: { onReset: () => void }) {
         }
       `}</style>
 
-      {/* Custom minimal toolbar */}
-      <MinimalToolbar excalidrawAPI={excalidrawAPI} />
+      {/* Logo - top left (mobile only, desktop has it in LeftNavigation) */}
+      {isMobile && (
+        <div
+          style={{
+            position: "fixed",
+            top: 16,
+            left: 16,
+            zIndex: 100,
+          }}
+        >
+          <img
+            src="/penseum_logo.svg"
+            alt="Penseum"
+            style={{ width: 40, height: 40 }}
+          />
+        </div>
+      )}
+
       {/* Full-screen Excalidraw canvas */}
       <Excalidraw
         excalidrawAPI={(api: any) => setExcalidrawAPI(api)}
@@ -270,8 +233,8 @@ function ExcalidrawRoom({ onReset }: { onReset: () => void }) {
         renderTopRightUI={() => null}
       />
 
-      {/* Debug panel for position testing (Cmd+D to toggle) */}
-      <DebugPanel excalidrawAPI={excalidrawAPI} />
+      {/* Custom minimal toolbar - responsive */}
+      <MinimalToolbar excalidrawAPI={excalidrawAPI} isMobile={isMobile} />
 
       {/* Stream canvas to AI via LiveKit */}
       {excalidrawAPI && room && (
@@ -291,10 +254,10 @@ function ExcalidrawRoom({ onReset }: { onReset: () => void }) {
       {/* Render AI audio output */}
       <RoomAudioRenderer />
 
-      {/* Floating ChatPill - controls + messages */}
-      <ChatPill onReset={onReset} />
+      {/* ChatPill - responsive */}
+      <ChatPill onReset={onReset} isMobile={isMobile} />
 
-      {/* Left Navigation */}
+      {/* Left Navigation - desktop only (hidden on mobile via CSS class) */}
       <LeftNavigation />
     </div>
   );
@@ -312,24 +275,26 @@ function ModeSelector({ onSelect }: { onSelect: (mode: TutorMode) => void }) {
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        height: "100vh",
+        minHeight: "100dvh",
+        padding: "20px",
+        boxSizing: "border-box",
         background: "#FAF9F7",
         fontFamily: "system-ui, sans-serif",
       }}
     >
-      <h1 style={{ fontSize: 32, fontWeight: 600, marginBottom: 8, color: "#1a1a1a" }}>
+      <h1 style={{ fontSize: "clamp(24px, 6vw, 32px)", fontWeight: 600, marginBottom: 8, color: "#1a1a1a", textAlign: "center" }}>
         Penseum Tutor
       </h1>
-      <p style={{ fontSize: 16, color: "#666", marginBottom: 40 }}>
+      <p style={{ fontSize: 16, color: "#666", marginBottom: 40, textAlign: "center" }}>
         Choose your learning mode
       </p>
 
-      <div style={{ display: "flex", gap: 20 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16, width: "100%", maxWidth: 420 }}>
         {/* Guided Mode */}
         <button
           onClick={() => onSelect("guided")}
           style={{
-            width: 200,
+            width: "100%",
             padding: "24px 20px",
             borderRadius: 16,
             border: "2px solid #E8E4DE",
@@ -360,7 +325,7 @@ function ModeSelector({ onSelect }: { onSelect: (mode: TutorMode) => void }) {
         <button
           onClick={() => onSelect("normal")}
           style={{
-            width: 200,
+            width: "100%",
             padding: "24px 20px",
             borderRadius: 16,
             border: "2px solid #E8E4DE",

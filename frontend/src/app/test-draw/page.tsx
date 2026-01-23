@@ -1,8 +1,9 @@
 "use client";
 import "@excalidraw/excalidraw/index.css";
 import dynamic from "next/dynamic";
-import { useState } from "react";
-import { triggerToolCall } from "../../components/ExcalidrawToolHandler";
+import { useState, useCallback } from "react";
+import { triggerToolCall, AnimatedAnnotateRequest } from "../../components/ExcalidrawToolHandler";
+import { AnimatedAnnotation, AnimatedAnnotationResult } from "../../components/AnimatedAnnotation";
 
 // Dynamic import - Excalidraw doesn't support SSR
 const Excalidraw = dynamic(
@@ -16,6 +17,103 @@ export default function TestDrawPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [lastResult, setLastResult] = useState<any>(null);
+  // State for animated annotation overlay
+  const [animatedAnnotation, setAnimatedAnnotation] = useState<{
+    shape: "circle" | "rectangle";
+    // Screen coords for SVG overlay
+    screenX: number;
+    screenY: number;
+    screenWidth: number;
+    screenHeight: number;
+    // Scene coords for freedraw element (pre-calculated by handler)
+    sceneX: number;
+    sceneY: number;
+    sceneWidth: number;
+    sceneHeight: number;
+  } | null>(null);
+
+  // Callback for animated annotations - triggered by triggerToolCall
+  const handleAnimatedAnnotate = useCallback((request: AnimatedAnnotateRequest) => {
+    setAnimatedAnnotation({
+      shape: request.shape,
+      screenX: request.screenX,
+      screenY: request.screenY,
+      screenWidth: request.screenWidth,
+      screenHeight: request.screenHeight,
+      sceneX: request.sceneX,
+      sceneY: request.sceneY,
+      sceneWidth: request.sceneWidth,
+      sceneHeight: request.sceneHeight,
+    });
+  }, []);
+
+  // Create freedraw element from animation result
+  const createFreedrawElement = useCallback((result: AnimatedAnnotationResult) => {
+    if (!excalidrawAPI || !animatedAnnotation) return;
+
+    // Use pre-calculated scene coordinates from the annotation request
+    const freedrawStrokeWidth = 0.5;
+
+    const freedrawElement = {
+      id: `freedraw-${Date.now()}`,
+      type: "freedraw" as const,
+      x: animatedAnnotation.sceneX,
+      y: animatedAnnotation.sceneY,
+      width: animatedAnnotation.sceneWidth,
+      height: animatedAnnotation.sceneHeight,
+      angle: 0,
+      strokeColor: result.strokeColor,
+      backgroundColor: "transparent",
+      fillStyle: "solid" as const,
+      strokeWidth: freedrawStrokeWidth,
+      strokeStyle: "solid" as const,
+      roughness: 1,
+      opacity: 100,
+      groupIds: [],
+      frameId: null,
+      index: "a0",
+      roundness: null,
+      seed: Math.floor(Math.random() * 100000),
+      version: 1,
+      versionNonce: Math.floor(Math.random() * 100000),
+      isDeleted: false,
+      boundElements: null,
+      updated: Date.now(),
+      link: null,
+      locked: false,
+      // Freedraw-specific
+      points: result.points,
+      pressures: result.pressures,
+      simulatePressure: false,
+      lastCommittedPoint: null,
+    };
+
+    // Add to scene
+    const elements = excalidrawAPI.getSceneElements();
+    excalidrawAPI.updateScene({
+      elements: [...elements, freedrawElement],
+    });
+
+    // Clear the animated overlay
+    setAnimatedAnnotation(null);
+  }, [excalidrawAPI, animatedAnnotation]);
+
+  // Capture canvas to base64
+  const captureCanvas = (): string | null => {
+    try {
+      const canvas = document.querySelector(".excalidraw__canvas") as HTMLCanvasElement;
+      if (!canvas) {
+        console.warn("Could not find Excalidraw canvas");
+        return null;
+      }
+      // Get data URL and strip the prefix to get pure base64
+      const dataUrl = canvas.toDataURL("image/png");
+      return dataUrl.replace(/^data:image\/png;base64,/, "");
+    } catch (e) {
+      console.error("Failed to capture canvas:", e);
+      return null;
+    }
+  };
 
   const handleSubmit = async () => {
     if (!query.trim() || !excalidrawAPI) return;
@@ -25,10 +123,13 @@ export default function TestDrawPage() {
     setLastResult(null);
 
     try {
+      // Always capture screenshot
+      const screenshot = captureCanvas();
+
       const response = await fetch("/api/draw", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query }),
+        body: JSON.stringify({ query, screenshot }),
       });
 
       if (!response.ok) {
@@ -42,7 +143,7 @@ export default function TestDrawPage() {
       // Execute each tool call
       if (data.toolCalls && Array.isArray(data.toolCalls)) {
         for (const toolCall of data.toolCalls) {
-          triggerToolCall(excalidrawAPI, toolCall.tool, toolCall.params);
+          triggerToolCall(excalidrawAPI, toolCall.tool, toolCall.params, handleAnimatedAnnotate);
           // Small delay between tool calls
           await new Promise(resolve => setTimeout(resolve, 100));
         }
@@ -57,6 +158,18 @@ export default function TestDrawPage() {
 
   return (
     <div style={{ width: "100vw", height: "100vh", position: "relative" }}>
+      {/* Animated Annotation Overlay */}
+      {animatedAnnotation && (
+        <AnimatedAnnotation
+          shape={animatedAnnotation.shape}
+          x={animatedAnnotation.screenX}
+          y={animatedAnnotation.screenY}
+          width={animatedAnnotation.screenWidth}
+          height={animatedAnnotation.screenHeight}
+          onComplete={createFreedrawElement}
+        />
+      )}
+
       {/* Title */}
       <div
         style={{
@@ -172,6 +285,63 @@ export default function TestDrawPage() {
             }}
           >
             Clear
+          </button>
+
+          <button
+            onClick={() => {
+              if (excalidrawAPI) {
+                // Test annotate with animated circle in center
+                triggerToolCall(excalidrawAPI, "annotate", {
+                  shape: "circle",
+                  x: 0.5,
+                  y: 0.5,
+                  width: 0.15,
+                  height: 0.15,
+                  target: "test"
+                }, handleAnimatedAnnotate);
+              }
+            }}
+            style={{
+              padding: "10px 20px",
+              borderRadius: 8,
+              border: "1px solid #6F47EB",
+              background: "white",
+              color: "#6F47EB",
+              fontSize: 14,
+              fontWeight: 500,
+              cursor: "pointer",
+              transition: "all 0.2s ease",
+            }}
+          >
+            Test Annotate
+          </button>
+
+          <button
+            onClick={() => {
+              if (!excalidrawAPI) return;
+              // Animated rectangle via annotate tool
+              triggerToolCall(excalidrawAPI, "annotate", {
+                shape: "rectangle",
+                x: 0.5,
+                y: 0.5,
+                width: 0.2,
+                height: 0.12,
+                target: "test rect"
+              }, handleAnimatedAnnotate);
+            }}
+            style={{
+              padding: "10px 20px",
+              borderRadius: 8,
+              border: "1px solid #e03131",
+              background: "white",
+              color: "#e03131",
+              fontSize: 14,
+              fontWeight: 500,
+              cursor: "pointer",
+              transition: "all 0.2s ease",
+            }}
+          >
+            Test Rect
           </button>
 
           {lastResult && (

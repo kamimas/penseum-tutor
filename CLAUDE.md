@@ -1,256 +1,118 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## Project Overview
 
-Penseum Tutor is a real-time multimodal AI tutoring platform combining:
-- React/Next.js frontend with an interactive tldraw whiteboard canvas
-- Python-based AI agent backend using LiveKit for real-time audio/video communication
-- OpenAI Realtime API for speech synthesis
-- Custom shape utilities for rendering LaTeX, plots, tables, flowcharts, and images
+Penseum Tutor is a real-time multimodal AI tutoring platform:
+- Next.js frontend with Excalidraw whiteboard canvas
+- Python agent using LiveKit for real-time audio/video
+- Gemini Realtime API for voice + vision
+- Agent orchestration: Realtime tutor delegates to specialized sub-agents
 
 ## Development Commands
 
-### Full Stack (Docker)
 ```bash
-docker-compose up          # Start frontend (port 3000) and agent
-docker-compose up --build  # Rebuild and start
-```
+# Full Stack (Docker)
+docker-compose up --build
 
-### Frontend Only
-```bash
-cd frontend
-npm install
-npm run dev    # Development server on port 3000
-npm run build  # Production build
-```
+# Frontend Only
+cd frontend && npm install && npm run dev
 
-### Agent Only
-```bash
-cd agent
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-python tutor.py dev  # Run agent in dev mode
+# Agent Only
+cd agent && source venv/bin/activate && python tutor.py dev
 ```
 
 ## Architecture
 
 ```
-penseum-tutor/
-├── frontend/                 # Next.js 14 App Router
-│   ├── app/
-│   │   ├── page.tsx         # Main entry - LiveKit room setup, StatusBar
-│   │   ├── api/
-│   │   │   ├── token/       # LiveKit token generation
-│   │   │   └── image-search/# SerpAPI image search proxy
-│   │   └── components/
-│   │       ├── TutorCanvas.tsx      # Main canvas, tool handlers, LayoutManager
-│   │       └── shapes/              # Custom tldraw shape utilities
-│   │           ├── LatexShapeUtil   # KaTeX math rendering
-│   │           ├── PlotShapeUtil    # function-plot graphs
-│   │           ├── TableShapeUtil   # Comparison tables
-│   │           ├── FlowchartShapeUtil
-│   │           └── TutorImageShapeUtil
-│   └── package.json
-│
-├── agent/                    # Python LiveKit agent
-│   ├── tutor.py             # Main agent - tool definitions, LLM coordination
-│   ├── lesson.json          # Lesson structure with concepts array
-│   ├── prompt.txt           # System prompt for tutor behavior
-│   └── requirements.txt
-│
-├── docker-compose.yml        # Multi-service orchestration
-└── .env                      # API keys (LiveKit, OpenAI, xAI, SerpAPI)
+Realtime Tutor (Gemini)
+  ├── Voice conversation + video input
+  └── Tools: draw(query), clear_board
+
+draw(query) → Frontend
+  ├── Captures canvas screenshot
+  ├── Calls /api/draw → Draw Sub-Agent (Gemini 3 Flash)
+  └── Renders returned tool calls
+
+Draw Sub-Agent Tools:
+  - add_text(content, size, position)
+  - show_image(query, position)
+  - draw_diagram(type, nodes, direction)
+  - annotate(shape, x, y, width, height, target)
+  - animate(prompt, position) → p5.js iframe
 ```
 
-## Data Flow
+## Key Files
 
-1. Frontend generates LiveKit token via `/api/token`
-2. User joins LiveKit room; agent joins same room
-3. Agent processes audio input via OpenAI Realtime API
-4. Agent publishes tool calls as JSON via LiveKit data channel (topic: `tutor_draw`)
-5. TutorCanvas receives tool calls and renders shapes on whiteboard
-6. LayoutManager auto-positions content vertically with auto-scroll
-
-## Tool Call Protocol
-
-Agent publishes JSON to `tutor_draw` topic:
-```json
-{ "tool": "tool_name", "params": { ... } }
 ```
+agent/
+├── tutor.py                 # Main realtime agent
+├── draw_subagent.py         # R&D version (CLI testing)
+├── draw_subagent_live.py    # Production version
+├── p5js/p5_subagent.py      # p5.js animation generator
+├── prompt_normal_gemini.txt # Tutor system prompt
+└── prompt_guided.txt        # Guided lesson prompt
 
-Available tools:
-- `add_text(content, size)` - Text/LaTeX (auto-detects LaTeX patterns)
-- `show_image(query)` - Image search and display
-- `draw_table(headers, rows)` - Comparison tables
-- `draw_flowchart(steps)` - Process flow diagrams
-- `plot_function(equation)` - Mathematical function graphs
-- `clear_board()` - Reset canvas
-- `next_concept()` - Progress to next lesson concept
-- `finish_lesson()` - End lesson, enable Q&A
+frontend/src/
+├── app/page.tsx                        # Main entry
+├── app/api/draw/route.ts               # Draw sub-agent API
+├── app/api/p5/route.ts                 # p5.js animation API
+├── app/test-draw/page.tsx              # Test page (no LiveKit)
+├── app/test-p5/page.tsx                # p5.js test page
+└── components/ExcalidrawToolHandler.tsx # Tool rendering
+```
 
 ## Environment Variables
 
-Required in `.env`:
-- `LIVEKIT_URL` - LiveKit server WebSocket URL
-- `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` - LiveKit credentials
-- `OPENAI_API_KEY` - For OpenAI Realtime API
-- `GOOGLE_API_KEY` - For Gemini Realtime API and Draw Sub-Agent
-- `SERPAPI_API_KEY` - For image search
-
-## Agent Orchestration Architecture
-
-The system uses **agent orchestration** where the realtime agent delegates drawing tasks to a specialized sub-agent.
-
-### Architecture Flow
-
 ```
-Realtime Agent (Gemini Realtime)
-  - Handles voice conversation
-  - Tool: draw(query)  [simplified, low-latency]
-  ↓
-Draw Sub-Agent (Gemini 3 Flash)
-  - Receives natural language query
-  - Decides which drawing tools to use
-  - Tools: add_text, show_image, draw_diagram
-  - Returns tool calls as JSON
-  ↓
-Backend publishes to LiveKit data channel
-  ↓
-Frontend renders on canvas
+LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
+GOOGLE_API_KEY          # Gemini Realtime + Sub-agents
+SERPAPI_API_KEY         # Image search
 ```
 
-### Benefits
+## Current Priorities
 
-1. **Low Latency**: Realtime agent has simple tools, responds fast
-2. **Better Decisions**: Sub-agent is more capable (Gemini 3), uses structured prompts
-3. **Separation of Concerns**: Conversation ≠ Visual rendering logic
-4. **Scalability**: Can add more specialized sub-agents (video, audio, etc.)
+### 1. Animate Drawing Actions (High) - IN PROGRESS
+Make annotations feel hand-drawn instead of instant.
 
-### Files
+**Status:** R&D in progress on test-draw page.
 
-```
-agent/
-├── tutor.py              # Main realtime agent
-├── draw_subagent.py      # Draw sub-agent (Gemini 3 Flash)
-└── ...
+**What works:**
+- `AnimatedAnnotation` component uses Framer Motion SVG `pathLength` animation
+- Circle draws progressively over 0.6s with wobbly hand-drawn path
+- Test button "Animated Circle" on `/test-draw` page
 
-frontend/
-├── src/app/api/draw/route.ts     # API endpoint for sub-agent
-├── src/app/test-draw/page.tsx    # Test page (no LiveKit)
-└── ...
-```
+**Current approach (testing):**
+Using Excalidraw's `freedraw` element type which accepts custom `points` array.
+Found in SDK: `newFreeDrawElement({ type: "freedraw", points, simulatePressure })`.
 
-### Testing Draw Sub-Agent
+Plan:
+1. Animate SVG overlay (visual feedback)
+2. On complete, create `freedraw` element with same points
+3. Remove SVG overlay → element is now native/selectable
 
-**Standalone CLI:**
+**Files:**
+- `frontend/src/components/AnimatedAnnotation.tsx` - Framer Motion SVG component
+- `frontend/src/app/test-draw/page.tsx` - R&D test page with manual trigger buttons
+
+**Reference:** Excalidraw types at `node_modules/@excalidraw/excalidraw/dist/types/excalidraw/element/`
+
+### 2. P5.js Prompt Optimization (Medium)
+`agent/p5js/p5_subagent.py` has 500+ line prompt. Trim redundant examples to speed up generation.
+
+### 3. P5.js Iframe Deletable (Low)
+Overlays stored in `animationOverlays` Map. Add close button or `delete_animation` tool.
+Currently only `clear_board` removes all animations.
+
+## Testing
+
 ```bash
-cd agent
-source venv/bin/activate
-python draw_subagent.py "draw a red car on a hill"
-```
+# Test draw sub-agent
+cd agent && python draw_subagent.py "explain photosynthesis"
 
-**Test Page (no LiveKit):**
-```
+# Test p5.js animations
+cd agent && python p5js/p5_subagent.py "animate an exothermic reaction"
+
+# Test pages (no LiveKit needed)
 http://localhost:3000/test-draw
+http://localhost:3000/test-p5
 ```
-
-**Sub-Agent Prompt Structure:**
-- Clear tool descriptions (PURPOSE, WHEN TO USE, WHEN NOT TO USE)
-- Decision framework (3-step process)
-- Rich examples with reasoning
-- Critical rules (ALWAYS/NEVER statements)
-- Edge case handling
-
-## Switching Between OpenAI and Gemini
-
-The agent supports both OpenAI Realtime and Gemini Realtime models.
-
-### File Structure
-```
-agent/
-├── tutor.py                    # Main agent (currently Gemini)
-├── tutor_openai.py             # OpenAI version backup
-├── prompt_normal.txt           # Generic prompt
-├── prompt_normal_openai.txt    # OpenAI-specific prompt
-└── prompt_normal_gemini.txt    # Gemini-specific prompt (currently active)
-```
-
-### To Switch Models
-
-**Switch to Gemini:**
-1. In `tutor.py`, change imports to `from livekit.plugins import google`
-2. Change `PROMPT_NORMAL_FILE` to `prompt_normal_gemini.txt`
-3. Use `google.realtime.RealtimeModel(...)` with Gemini model name
-4. Add `GOOGLE_API_KEY` to `.env`
-
-**Switch to OpenAI:**
-1. In `tutor.py`, change imports to `from livekit.plugins import openai`
-2. Change `PROMPT_NORMAL_FILE` to `prompt_normal_openai.txt`
-3. Use `openai.realtime.RealtimeModel(...)` with OpenAI model name
-4. Add `OPENAI_API_KEY` to `.env`
-
-### OpenAI Realtime
-```python
-from livekit.plugins import openai
-from openai.types import realtime as openai_realtime
-
-session = AgentSession(
-    llm=openai.realtime.RealtimeModel(
-        model="gpt-realtime",
-        voice="ash",  # Options: ash, ballad, coral, sage, verse
-        input_audio_transcription=openai_realtime.AudioTranscription(
-            model="gpt-4o-transcribe",
-        ),
-    ),
-    allow_interruptions=True,
-)
-```
-
-### Gemini Realtime
-```python
-from livekit.plugins import google
-from google.genai import types
-
-session = AgentSession(
-    llm=google.realtime.RealtimeModel(
-        model="gemini-2.5-flash-native-audio-preview-12-2025",
-        voice="Puck",  # Star names: Puck, Charon, Kore, Aoede, Fenrir, etc.
-        input_audio_transcription=types.AudioTranscriptionConfig(),
-        # Optional tool behavior settings:
-        # tool_behavior=types.Behavior.BLOCKING,  # Wait for tool before continuing
-        # tool_response_scheduling=types.FunctionResponseScheduling.WHEN_IDLE,
-    ),
-    allow_interruptions=True,
-)
-```
-
-### Key Differences
-
-| Feature | OpenAI | Gemini |
-|---------|--------|--------|
-| Env var | `OPENAI_API_KEY` | `GOOGLE_API_KEY` |
-| Voices | ash, ballad, coral, sage, verse | Puck, Charon, Kore, Aoede, etc. |
-| Speed control | Yes (`speed=1.0`) | No |
-| Tool behavior | Manual (`manual_function_calls=True`) | Auto (`auto_tool_reply_generation=True`) |
-| Message truncation | Yes | No |
-
-### Gemini Tool Behavior Options
-
-**`tool_behavior`** - How model handles tool calls:
-- `BLOCKING` - Wait for tool response before continuing (default)
-- `NON_BLOCKING` - Continue talking while tool executes
-
-**`tool_response_scheduling`** - What happens when tool responds:
-- `SILENT` - Add to context only, no generation
-- `WHEN_IDLE` - Generate when model isn't talking (default)
-- `INTERRUPT` - Interrupt current speech and respond
-
-## Key Implementation Notes
-
-- **M1/M2/M3 Mac**: Agent Docker uses `platform: linux/amd64` for compatibility
-- **LaTeX Detection**: Regex patterns detect `\commands`, `^{}`, `$...$`, `$$...$$`
-- **Tool Logging**: All tool calls logged to `agent/tool_calls.log`
-- **Interruptions**: Agent session allows user to interrupt mid-speech

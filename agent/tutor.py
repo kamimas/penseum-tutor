@@ -15,8 +15,15 @@ from livekit.agents import (
     cli,
     function_tool,
 )
+# === MODEL SELECTION ===
+# Uncomment ONE of the following import blocks:
+
+# --- GEMINI (has video) ---
 from livekit.plugins import google
 from google.genai import types
+
+# --- XAI (no video) ---
+# from livekit.plugins import xai
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -28,7 +35,8 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 # Load prompts from files
 PROMPT_GUIDED_FILE = Path(__file__).parent / "prompt_guided.txt"
-PROMPT_NORMAL_FILE = Path(__file__).parent / "prompt_normal_gemini.txt"  # Using Gemini-specific prompt
+# Using Gemini prompt for now (works with xAI too, just remove vision references if needed)
+PROMPT_NORMAL_FILE = Path(__file__).parent / "prompt_normal_gemini.txt"
 
 PROMPT_GUIDED = PROMPT_GUIDED_FILE.read_text() if PROMPT_GUIDED_FILE.exists() else """
 You are a tutor teaching a structured lesson. Speak English only.
@@ -129,66 +137,34 @@ VALID_POSITIONS = [
 # ============================================
 
 @function_tool()
-async def add_text(context: RunContext, content: str, size: str = "medium", position: str = "center") -> str:
+async def draw(context: RunContext, query: str) -> str:
     """
-    Write text on the whiteboard. USE THIS for titles, equations, definitions, key points.
+    Draw visuals on the whiteboard. USE THIS for any visual content: text, images, diagrams.
+    Also use this to annotate/circle/highlight things on the whiteboard.
+
+    A specialized sub-agent will decide the best way to visualize your request.
 
     Args:
-        content: Text to display (supports math notation)
-        size: "large" for titles, "medium" for content (default), "small" for notes
-        position: "center" (default for first item), "below-last", or "right-of-last"
+        query: Natural language description of what to show (e.g., "show the water cycle",
+               "display the pythagorean theorem", "draw a neuron diagram",
+               "circle the mitochondria", "highlight the equation")
     """
-    _send_tool_call("add_text", {"content": content, "size": size, "position": position})
-    return "Text added. Briefly explain it, then add your next visual."
+    logger.info(f"[DRAW TOOL] Sending draw_query to frontend: {query}")
 
+    # Send query to frontend - frontend will handle screenshot + API call + render
+    # This matches the R&D flow exactly (test-draw page)
+    _send_tool_call("draw_query", {"query": query})
 
-@function_tool()
-async def show_image(context: RunContext, query: str, position: str = "center") -> str:
-    """
-    Search and display an image. USE THIS for diagrams, photos, illustrations that help explain concepts.
-
-    Args:
-        query: Specific search query (e.g., "mitochondria cell diagram", "world war 2 map europe")
-        position: "center" (default for first item), "below-last", or "right-of-last"
-    """
-    _send_tool_call("show_image", {"query": query, "position": position})
-    return "Image added. Briefly explain what it shows, then continue teaching."
+    # NOTE: For xAI/OpenAI, the framework auto-triggers generate_reply() after tool completion.
+    # Keep return value minimal to avoid prompting the model to over-explain.
+    return "Done."
 
 
 @function_tool()
 async def clear_board(context: RunContext) -> str:
     """Clear the whiteboard. USE THIS when switching to a new topic or when the board is cluttered."""
     _send_tool_call("clear_board", {})
-    return "Board cleared. Start fresh with your next visual."
-
-
-@function_tool()
-async def draw_diagram(
-    context: RunContext,
-    type: str,
-    nodes: list[str],
-    edges: list[list] | None = None,
-    direction: str = "TB",
-    position: str = "center"
-) -> str:
-    """
-    Draw a diagram. USE THIS for processes, relationships, hierarchies, timelines.
-
-    Args:
-        type: "flowchart", "mindmap", "cycle", or "timeline"
-        nodes: List of step/concept labels. Just provide the labels - connections are automatic.
-        edges: Optional. Omit for linear flow (0→1→2→3). Or specify: [[0,1], [1,2,"label"]]
-        direction: "TB" (top-to-bottom, default), "LR" (left-to-right)
-        position: "center" (default for first item), "below-last", or "right-of-last"
-    """
-    _send_tool_call("draw_diagram", {
-        "type": type,
-        "nodes": nodes,
-        "edges": edges,
-        "direction": direction,
-        "position": position
-    })
-    return "Diagram added. Walk through it with the student, then continue teaching."
+    return "Done."
 
 
 @function_tool()
@@ -242,8 +218,9 @@ async def handle_control_message(data: bytes):
         if msg_type == "set_speed":
             speed = message.get("speed", 1.0)
             logger.info(f"[CONTROL] Speed control requested: {speed}x")
-            # NOTE: Gemini does not support speed control, only OpenAI does
-            logger.warning("[CONTROL] Speed control not supported with Gemini model")
+            # NOTE: Gemini does not support speed control, only OpenAI/xAI does
+            # logger.warning("[CONTROL] Speed control not supported with Gemini model")
+            logger.info("[CONTROL] Speed control supported with xAI model")
         else:
             logger.warning(f"[CONTROL] Unknown message type: {msg_type}")
 
@@ -280,7 +257,7 @@ async def entrypoint(ctx: JobContext):
         f.write(f"MODE: {_tutor_mode}\n")
         f.write(f"ROOM: {ctx.room.name}\n")
 
-    # Register data channel handler for control messages
+    # Register data channel handlers
     @ctx.room.on("data_received")
     def on_data_received(data: rtc.DataPacket):
         if data.topic == "tutor_control":
@@ -291,11 +268,11 @@ async def entrypoint(ctx: JobContext):
     # Select prompt and tools based on mode
     if _tutor_mode == "guided":
         system_prompt = PROMPT_GUIDED
-        tools = [add_text, show_image, draw_diagram, next_concept, finish_lesson]
+        tools = [draw, clear_board, next_concept, finish_lesson]
         logger.info("=== USING GUIDED TOOLS (with next_concept, finish_lesson) ===")
     else:
         system_prompt = PROMPT_NORMAL
-        tools = [add_text, show_image, clear_board, draw_diagram]
+        tools = [draw, clear_board]
         logger.info("=== USING NORMAL TOOLS (no lesson progression) ===")
 
     agent = Agent(
@@ -303,19 +280,38 @@ async def entrypoint(ctx: JobContext):
         tools=tools,
     )
 
+    # === MODEL SELECTION ===
+    # Uncomment ONE of the following session blocks:
+
+    # --- GEMINI (has video) ---
     session = AgentSession(
         llm=google.realtime.RealtimeModel(
             model="gemini-2.5-flash-native-audio-preview-09-2025",
             voice="Charon",
             input_audio_transcription=types.AudioTranscriptionConfig(),
-            tool_behavior=types.Behavior.BLOCKING,  # Wait for tool response before continuing
-            tool_response_scheduling=types.FunctionResponseScheduling.WHEN_IDLE,  # Respond when not talking
+            tool_behavior=types.Behavior.NON_BLOCKING,  # Continue speaking while tools execute
+            tool_response_scheduling=types.FunctionResponseScheduling.SILENT,  # Don't trigger new generation on tool response
         ),
         allow_interruptions=True,
     )
+
+    # --- XAI (no video) ---
+    # session = AgentSession(
+    #     llm=xai.realtime.RealtimeModel(
+    #         voice="Ara",  # Options: Ara, Eve, Leo, Rex, Sal
+    #         # model is hardcoded to grok-4-1-fast-non-reasoning
+    #     ),
+    #     allow_interruptions=True,
+    # )
+
     _session = session  # Store globally for speed control
 
     logger.info("=== STARTING SESSION ===")
+
+    # === MODEL SELECTION ===
+    # Uncomment ONE of the following start blocks:
+
+    # --- GEMINI (has video) ---
     logger.info("=== VIDEO INPUT ENABLED ===")
     await session.start(
         agent=agent,
@@ -323,12 +319,19 @@ async def entrypoint(ctx: JobContext):
         room_input_options=RoomInputOptions(video_enabled=True),
     )
 
-    # Log video input status
-    logger.info(f"=== SESSION INPUT VIDEO: {session.input.video} ===")
-    if session.input.video:
-        logger.info("=== VIDEO INPUT IS ACTIVE ===")
-    else:
-        logger.info("=== WARNING: VIDEO INPUT IS NONE ===")
+    # --- XAI (no video) ---
+    # logger.info("=== XAI MODE - NO VIDEO ===")
+    # await session.start(
+    #     agent=agent,
+    #     room=ctx.room,
+    # )
+
+    # Log video input status (only relevant for Gemini)
+    # logger.info(f"=== SESSION INPUT VIDEO: {session.input.video} ===")
+    # if session.input.video:
+    #     logger.info("=== VIDEO INPUT IS ACTIVE ===")
+    # else:
+    #     logger.info("=== WARNING: VIDEO INPUT IS NONE ===")
 
     # Start based on mode
     if _tutor_mode == "guided" and LESSON_DATA and LESSON_DATA.get("concepts"):

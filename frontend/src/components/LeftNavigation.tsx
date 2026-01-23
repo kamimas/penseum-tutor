@@ -5,6 +5,7 @@ import { LayoutGrid, Compass, Settings, ChevronDown, ChevronUp } from "lucide-re
 export function LeftNavigation() {
   return (
     <div
+      className="hidden md:flex"
       style={{
         position: "fixed",
         top: 20,
@@ -16,7 +17,6 @@ export function LeftNavigation() {
         boxShadow: "0 4px 24px rgba(0,0,0,0.06)",
         border: "1px solid #E8E4DE",
         zIndex: 100,
-        display: "flex",
         flexDirection: "column",
         fontFamily: "system-ui, -apple-system, sans-serif",
         overflow: "hidden",
