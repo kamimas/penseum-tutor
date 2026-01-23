@@ -157,7 +157,7 @@ export default function Phase3Page() {
           handleImageSearch(tc.args.query as string, tc.id);
         } else {
           addLog("error", `Unknown tool: ${tc.name}`);
-          client.sendToolResponse(tc.id, { error: "Unknown tool" });
+          client.sendToolResponse(tc.id, tc.name, "Error: Unknown tool");
         }
       }
     });

@@ -14,7 +14,157 @@ Replace LiveKit's WebRTC infrastructure with direct browser-to-Gemini WebSocket 
 | Phase 1 | **COMPLETE** | Voice conversation working |
 | Phase 2 | **COMPLETE** | Screen sharing working (simplified from canvas) |
 | Phase 3 | **COMPLETE** | Tool calling working (tested with image_search) |
-| Phase 4 | Pending | Full integration with draw/clear_board tools |
+| Phase 4 | **COMPLETE** | Moved to production-style page at `/gemini` |
+| Production Integration | **COMPLETE** | Core functionality working |
+| Feature Parity | **COMPLETE** | Message history, Framer Motion animations, status transitions |
+| **Video/Vision** | **NEEDS VERIFICATION** | Canvas streaming implemented but not verified working in production |
+
+---
+
+## Current Status: `/gemini` Page
+
+### What's Working
+- **Voice conversation** - Connects directly to Gemini, mic input works
+- **Canvas streaming** - 1 FPS JPEG frames sent to Gemini via `sendImage()` (implemented in `GeminiCanvasStreamer`)
+- **Tool calls** - `draw()` and `clear_board()` tools trigger correctly
+- **Canvas capture** - Screenshot returns proper size using `.excalidraw__canvas` selector
+- **Tool execution** - `/api/draw` returns tool calls, they render on Excalidraw
+- **UI** - Production-style ChatPill layout with message bubbles, Framer Motion animations, audio visualizer dots
+- **Transcriptions** - Real-time display of user and AI speech with message history (last 4 messages with fade)
+- **Message history** - Messages persist across turns with smooth animations
+
+### Needs Verification
+- **Vision/Video** - Canvas frames are being sent but need to verify Gemini actually receives and processes them
+
+### Fixed: Tool Call Loop Bug
+
+**Problem:** Tool calls fired repeatedly (10+ times) instead of once.
+
+**Root cause:** With `NON_BLOCKING` behavior, Gemini continues generating while waiting for tool response. If the response takes too long (e.g., waiting for `/api/draw` to complete), Gemini retries the tool call.
+
+**Solution:** Send `sendToolResponse()` immediately when tool call arrives, before async work begins. The actual drawing happens in background - Gemini doesn't need to wait since we use `SILENT` scheduling anyway.
+
+---
+
+## Feature Parity Status (COMPLETE)
+
+The `/gemini` page now matches production features (excluding LiveKit-specific features).
+
+### Feature Comparison
+
+| Feature | Production `/` | `/gemini` | Status |
+|---------|---------------|-----------|--------|
+| Voice conversation | ✅ | ✅ | Done |
+| Canvas vision | ✅ | ⚠️ | **Needs verification** |
+| Tool calls (draw, clear_board) | ✅ | ✅ | Done |
+| Transcriptions | ✅ Message history | ✅ Message history | Done |
+| Framer Motion animations | ✅ Smooth transitions | ✅ Smooth transitions | Done |
+| Mode selector (Guided/Normal) | ✅ | ❌ | Deferred (not needed for testing) |
+| Guided lesson tools | ✅ next_concept, finish_lesson | ❌ | Deferred |
+| Pause/Resume button | ✅ | N/A | Not applicable |
+| Speed control (1x, 1.25x, etc) | ✅ | N/A | Not applicable |
+
+### Not Applicable for Gemini Direct
+
+- **Pause/Resume** - Gemini Direct streams audio directly, can't pause server-side generation
+- **Speed control** - Same reason, speed is controlled by Gemini server
+
+---
+
+## Video/Vision Investigation
+
+### Current Implementation
+
+The video feed is implemented in `GeminiCanvasStreamer` component ([page.tsx:440-496](frontend/src/app/gemini/page.tsx#L440-L496)):
+
+1. **Canvas Capture** - Captures `.excalidraw__canvas` element
+2. **Resize** - Scales to max 1024x1024 if needed
+3. **JPEG Encoding** - Converts to JPEG at 70% quality
+4. **Send to Gemini** - Calls `client.sendImage(base64)` at 1 FPS
+
+### Knowns
+
+1. ✅ `GeminiCanvasStreamer` component exists and is rendered when `excalidrawAPI` and `client` are ready
+2. ✅ `sendImage()` method in `GeminiLiveClient` uses `sendRealtimeInput({ media: { mimeType: "image/jpeg", data } })`
+3. ✅ Canvas selector `.excalidraw__canvas` is the same one that works for tool screenshots
+4. ✅ The interval is set to 1000ms (1 FPS)
+5. ✅ Phase 2 experiment (screen share) confirmed vision worked with same SDK
+
+### Unknowns / To Verify
+
+1. ❓ **Is the canvas element found?** - Need console log to confirm
+2. ❓ **Is `sendImage()` actually being called?** - Need console log for each frame sent
+3. ❓ **What's the frame size?** - Previous issue was 3-byte screenshots
+4. ❓ **Does Gemini acknowledge receiving images?** - Ask "what do you see?" test
+5. ❓ **Is the client connected when streaming starts?** - Timing issue possible
+6. ❓ **Are there any SDK errors being silently swallowed?**
+
+### Debug Plan
+
+1. ✅ Add console.log to `GeminiCanvasStreamer.captureAndSend()` to log:
+   - Whether canvas element was found
+   - Size of the base64 string being sent
+   - Whether `client.sendImage()` is called
+
+2. ✅ Add console.log to `GeminiLiveClient.sendImage()` to confirm it's being invoked
+
+3. ✅ Add log event listener in GeminiRoom to see client logs
+
+4. ⬜ Manual test: Draw something on canvas, ask Gemini "what do you see on the whiteboard?"
+
+### Fixes Applied
+
+1. **Fixed conditional rendering of GeminiCanvasStreamer** - Was checking `clientRef.current` (a ref that doesn't trigger re-renders) instead of `connectionState` (state). Now uses: `connectionState === "connected" && clientRef.current`
+
+2. **Added debug logging** - Comprehensive console.logs in both the streamer component and the client's sendImage method
+
+### What to Look for in Console
+
+When testing, check the browser console for:
+```
+[GeminiCanvasStreamer] useEffect triggered {hasExcalidrawAPI: true, hasClient: true, clientState: "connected"}
+[GeminiCanvasStreamer] Starting canvas streaming at 1 FPS
+[GeminiCanvasStreamer] Frame #1: XXXXX bytes, WxH
+[GeminiClient:client] Sending image: XXXXX bytes
+```
+
+If you see "Not starting - conditions not met", that indicates a timing/rendering issue.
+
+---
+
+### Files
+
+**Main page:** `frontend/src/app/gemini/page.tsx`
+- Self-contained, no LiveKit dependencies
+- Uses `GeminiLiveClient` from experiments/gemini-direct/lib
+- Uses `triggerToolCall` from ExcalidrawToolHandler for rendering
+
+**Shared libs (from experiments):**
+- `experiments/gemini-direct/lib/GeminiLiveClient.ts` - WebSocket client
+- `experiments/gemini-direct/lib/AudioCapture.ts` - Mic → PCM 16kHz
+- `experiments/gemini-direct/lib/AudioPlayback.ts` - PCM 24kHz → speakers
+
+---
+
+## Architecture Comparison
+
+| Component | LiveKit (production `/`) | Gemini Direct (`/gemini`) |
+|-----------|--------------------------|---------------------------|
+| Voice connection | Browser → LiveKit → Python → Gemini | Browser → Gemini directly |
+| Canvas vision | ExcalidrawStreamer → LiveKit video track | GeminiCanvasStreamer → sendImage() |
+| Tool calls | Python agent sends via data channel | Gemini toolCall event → handleDrawToolCall |
+| Audio playback | RoomAudioRenderer (LiveKit) | AudioPlayback class |
+| Mic capture | LiveKit audio track | AudioCapture class |
+| Backend needed | Yes (Python agent + LiveKit server) | No (only /api/draw for sub-agent) |
+
+---
+
+## Old Phase 4 Status (Deprecated)
+
+The `/experiments/gemini-direct/phase4` page had canvas capture issues (3-byte screenshots). This was fixed by:
+1. Moving to production-style page at `/gemini`
+2. Using the same `document.querySelector(".excalidraw__canvas").toDataURL()` pattern as `/test-draw`
+3. Ensuring Excalidraw CSS is imported
 
 ### Files Created
 
@@ -23,7 +173,7 @@ frontend/src/app/experiments/gemini-direct/
 ├── PLAN.md
 ├── page.tsx                     # Index page with links to phases
 ├── lib/
-│   ├── GeminiLiveClient.ts      # @google/genai SDK wrapper (with tool support)
+│   ├── GeminiLiveClient.ts      # @google/genai SDK wrapper (with tool support + scheduling)
 │   ├── AudioCapture.ts          # Microphone → PCM 16kHz (AudioWorklet)
 │   ├── AudioPlayback.ts         # PCM 24kHz → speakers
 │   └── ScreenCapture.ts         # Screen share → JPEG frames
@@ -31,8 +181,10 @@ frontend/src/app/experiments/gemini-direct/
 │   └── page.tsx                 # Voice-only conversation
 ├── phase2/
 │   └── page.tsx                 # Voice + screen share
-└── phase3/
-    └── page.tsx                 # Voice + tool calling (image_search)
+├── phase3/
+│   └── page.tsx                 # Voice + tool calling (image_search)
+└── phase4/
+    └── page.tsx                 # Full Excalidraw + draw()/clear_board() tools
 ```
 
 ### Key Decisions

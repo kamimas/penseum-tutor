@@ -3,7 +3,7 @@ import "@excalidraw/excalidraw/index.css";
 import dynamic from "next/dynamic";
 import { useState, useCallback } from "react";
 import { triggerToolCall, AnimatedAnnotateRequest } from "../../components/ExcalidrawToolHandler";
-import { AnimatedAnnotation, AnimatedAnnotationResult } from "../../components/AnimatedAnnotation";
+import { AnimatedAnnotation, AnimatedAnnotationResult, AnimatedText } from "../../components/AnimatedAnnotation";
 
 // Dynamic import - Excalidraw doesn't support SSR
 const Excalidraw = dynamic(
@@ -17,6 +17,8 @@ export default function TestDrawPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [lastResult, setLastResult] = useState<any>(null);
+  // State for animated text overlay
+  const [animatedText, setAnimatedText] = useState<{ text: string; x: number; y: number } | null>(null);
   // State for animated annotation overlay
   const [animatedAnnotation, setAnimatedAnnotation] = useState<{
     shape: "circle" | "rectangle";
@@ -158,6 +160,16 @@ export default function TestDrawPage() {
 
   return (
     <div style={{ width: "100vw", height: "100vh", position: "relative" }}>
+      {/* Animated Text Overlay */}
+      {animatedText && (
+        <AnimatedText
+          text={animatedText.text}
+          x={animatedText.x}
+          y={animatedText.y}
+          fontSize={32}
+        />
+      )}
+
       {/* Animated Annotation Overlay */}
       {animatedAnnotation && (
         <AnimatedAnnotation
@@ -342,6 +354,30 @@ export default function TestDrawPage() {
             }}
           >
             Test Rect
+          </button>
+
+          <button
+            onClick={() => {
+              // Test animated text
+              setAnimatedText({
+                text: "Hello World!",
+                x: 100,
+                y: 200,
+              });
+            }}
+            style={{
+              padding: "10px 20px",
+              borderRadius: 8,
+              border: "1px solid #22c55e",
+              background: "white",
+              color: "#22c55e",
+              fontSize: 14,
+              fontWeight: 500,
+              cursor: "pointer",
+              transition: "all 0.2s ease",
+            }}
+          >
+            Test Text
           </button>
 
           {lastResult && (

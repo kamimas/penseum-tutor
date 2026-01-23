@@ -7,9 +7,11 @@ import {
   GoogleGenAI,
   LiveConnectConfig,
   LiveServerMessage,
+  Modality,
   Session,
   Part,
   FunctionDeclaration,
+  FunctionResponseScheduling,
   Tool,
 } from "@google/genai";
 import { EventEmitter } from "eventemitter3";
@@ -32,6 +34,8 @@ export interface GeminiLiveClientEvents {
   interrupted: () => void;
   error: (error: Error) => void;
   log: (type: string, message: string) => void;
+  inputTranscription: (text: string) => void;
+  outputTranscription: (text: string) => void;
 }
 
 export interface GeminiLiveClientConfig {
@@ -93,7 +97,7 @@ export class GeminiLiveClient extends EventEmitter<GeminiLiveClientEvents> {
     this.log("client", "Connecting...");
 
     const config: LiveConnectConfig = {
-      responseModalities: ["AUDIO"],
+      responseModalities: [Modality.AUDIO],
       speechConfig: {
         voiceConfig: {
           prebuiltVoiceConfig: {
@@ -113,6 +117,10 @@ export class GeminiLiveClient extends EventEmitter<GeminiLiveClientEvents> {
     if (this.systemInstruction) {
       config.systemInstruction = this.systemInstruction;
     }
+
+    // Enable audio transcription (both input and output)
+    config.inputAudioTranscription = {};
+    config.outputAudioTranscription = {};
 
     try {
       this.session = await this.client.live.connect({
@@ -202,6 +210,16 @@ export class GeminiLiveClient extends EventEmitter<GeminiLiveClientEvents> {
           this.log("server", `Content: ${JSON.stringify(otherParts)}`);
         }
       }
+
+      // Handle input transcription (user speech)
+      if ("inputTranscription" in content && content.inputTranscription?.text) {
+        this.emit("inputTranscription", content.inputTranscription.text);
+      }
+
+      // Handle output transcription (AI speech)
+      if ("outputTranscription" in content && content.outputTranscription?.text) {
+        this.emit("outputTranscription", content.outputTranscription.text);
+      }
     }
 
     // Tool calls
@@ -213,7 +231,7 @@ export class GeminiLiveClient extends EventEmitter<GeminiLiveClientEvents> {
           name: fc.name || "",
           args: (fc.args as Record<string, unknown>) || {},
         }));
-        this.log("server", `Tool calls: ${toolCalls.map(t => t.name).join(", ")}`);
+        this.log("server", `Tool calls: ${toolCalls.map(t => `${t.name}(id=${t.id})`).join(", ")}`);
         this.emit("toolCall", toolCalls);
       }
     }
@@ -258,9 +276,7 @@ export class GeminiLiveClient extends EventEmitter<GeminiLiveClientEvents> {
    * @param base64Jpeg Base64-encoded JPEG image
    */
   sendImage(base64Jpeg: string) {
-    if (!this.session || this.state !== "connected") {
-      return;
-    }
+    if (!this.session || this.state !== "connected") return;
 
     this.session.sendRealtimeInput({
       media: {
@@ -275,20 +291,27 @@ export class GeminiLiveClient extends EventEmitter<GeminiLiveClientEvents> {
    * @param toolCallId The ID from the function call
    * @param toolName The name of the function that was called
    * @param result The result to send back (will be wrapped in {output: result})
+   * @param scheduling How to schedule the response (SILENT, WHEN_IDLE, INTERRUPT)
    */
-  sendToolResponse(toolCallId: string, toolName: string, result: unknown) {
+  sendToolResponse(
+    toolCallId: string,
+    toolName: string,
+    result: unknown,
+    scheduling?: FunctionResponseScheduling
+  ) {
     if (!this.session || this.state !== "connected") {
       this.log("client", "Cannot send tool response - not connected");
       return;
     }
 
-    this.log("client", `Sending tool response for ${toolName} (${toolCallId})`);
+    this.log("client", `Sending tool response for ${toolName} (${toolCallId})${scheduling ? ` [${scheduling}]` : ""}`);
     this.session.sendToolResponse({
       functionResponses: [
         {
           id: toolCallId,
           name: toolName,
           response: { output: result },
+          scheduling,
         },
       ],
     });

@@ -2,6 +2,7 @@
 import { useEffect, useRef } from "react";
 import type { Room } from "livekit-client";
 import katex from "katex";
+import { convertToExcalidrawElements } from "@excalidraw/excalidraw";
 import {
   SimpleDiagramInput,
   DiagramType,
@@ -27,6 +28,17 @@ type PositionType =
   | "bottom-left" | "bottom-center" | "bottom-right"
   | "below-last" | "right-of-last";
 
+// Color mapping for accent bars and underlines
+type AccentColor = "none" | "purple" | "green" | "blue" | "red" | "orange";
+const COLOR_MAP: Record<AccentColor, string> = {
+  none: "transparent",
+  purple: "#9D7CD8",
+  green: "#7EC699",
+  blue: "#1971c2",
+  red: "#e03131",
+  orange: "#E5A853",
+};
+
 interface ToolParams {
   content?: string;
   size?: "small" | "medium" | "large";
@@ -35,6 +47,11 @@ interface ToolParams {
   x?: number;
   y?: number;
   position?: PositionType | string;
+  // Text styling params
+  emoji?: string;
+  accent?: AccentColor;
+  underline?: string[];
+  underline_color?: AccentColor;
   // Diagram params
   type?: DiagramType;
   nodes?: (string | { label: string; style?: string })[];
@@ -65,6 +82,8 @@ interface AnimationOverlay {
   y: number;
   width: number;
   height: number;
+  // Cleanup function to unsubscribe from scroll/zoom events
+  unsubscribe?: () => void;
 }
 const animationOverlays: Map<string, AnimationOverlay> = new Map();
 
@@ -575,85 +594,268 @@ function measureText(text: string, fontSize: number, fontFamily: number): { widt
   return { width: Math.max(paddedWidth, 10), height: Math.max(height, fontSize) };
 }
 
+// Animation timing for text
+const TEXT_WORD_DELAY = 150; // ms between words appearing
+
+/**
+ * Measure the width of a substring within text (for underline positioning)
+ */
+function measureSubstringPosition(
+  fullText: string,
+  targetWord: string,
+  fontSize: number,
+  fontFamily: number
+): { startX: number; width: number } | null {
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+
+  const fontFamilyName = fontFamily === 1 ? "Virgil, Segoe UI Emoji" :
+                         fontFamily === 2 ? "Helvetica, Segoe UI Emoji" :
+                         "Cascadia, Segoe UI Emoji";
+  ctx.font = `${fontSize}px ${fontFamilyName}`;
+
+  // Find the word in the text (case-insensitive)
+  const lowerText = fullText.toLowerCase();
+  const lowerTarget = targetWord.toLowerCase();
+  const wordIndex = lowerText.indexOf(lowerTarget);
+
+  if (wordIndex === -1) return null;
+
+  // Measure text up to the word start
+  const textBefore = fullText.slice(0, wordIndex);
+  const startX = ctx.measureText(textBefore).width * 1.2; // 1.2 for Virgil padding
+
+  // Measure the word itself
+  const actualWord = fullText.slice(wordIndex, wordIndex + targetWord.length);
+  const width = ctx.measureText(actualWord).width * 1.2;
+
+  return { startX, width };
+}
+
 function handleAddText(
   excalidrawAPI: ExcalidrawAPI,
   params: ToolParams
 ): void {
-  const { content = "", size = "medium", position = "center" } = params;
+  const {
+    content = "",
+    size = "medium",
+    position = "center",
+    emoji,
+    accent,
+    underline,
+    underline_color = "purple"
+  } = params;
 
   if (!content) {
     return;
   }
 
+  // Prepend emoji if provided
+  const displayContent = emoji ? `${emoji} ${content}` : content;
+
   const fontSize = getFontSize(size);
 
   // Check if content contains LaTeX - render as image if so
   if (containsLatex(content)) {
-    handleAddLatex(excalidrawAPI, content, fontSize, position as PositionType);
+    handleAddLatex(excalidrawAPI, displayContent, fontSize, position as PositionType);
     return;
   }
 
-  // Regular text rendering
-  const elements = excalidrawAPI.getSceneElements();
   const fontFamily = 1; // Virgil (hand-drawn style)
+  const groupId = generateId();
 
-  // Measure text dimensions
-  const { width, height } = measureText(content, fontSize, fontFamily);
+  // Measure full text dimensions
+  const { width: fullWidth, height } = measureText(displayContent, fontSize, fontFamily);
+
+  // Calculate accent bar width if needed
+  const accentBarWidth = accent && accent !== "none" ? 6 : 0;
+  const accentGap = accent && accent !== "none" ? 12 : 0;
+  const totalWidth = fullWidth + accentBarWidth + accentGap;
 
   // Calculate position based on position parameter
   const { x: posX, y: posY } = calculatePosition(
     excalidrawAPI,
     position as PositionType,
-    width,
+    totalWidth,
     height
   );
 
-  // Create text element with all required Excalidraw properties
-  const elementId = generateId();
-  const textElement = {
-    id: elementId,
-    type: "text" as const,
-    x: posX,
-    y: posY,
-    width: width,
-    height: height,
-    angle: 0,
-    strokeColor: "#1e1e1e",
-    backgroundColor: "transparent",
-    fillStyle: "solid" as const,
-    strokeWidth: 2,
-    strokeStyle: "solid" as const,
-    roughness: 1,
-    opacity: 100,
-    groupIds: [],
-    frameId: null,
-    index: "a0" as const,
-    roundness: null,
-    seed: Math.floor(Math.random() * 100000),
-    version: 1,
-    versionNonce: Math.floor(Math.random() * 100000),
-    isDeleted: false,
-    boundElements: null,
-    updated: Date.now(),
-    link: null,
-    locked: false,
-    text: content,
-    fontSize: fontSize,
-    fontFamily: fontFamily,
-    textAlign: "left" as const,
-    verticalAlign: "top" as const,
-    containerId: null,
-    originalText: content,
-    autoResize: true,
-    lineHeight: 1.25,
+  // Get current elements
+  const existingElements = excalidrawAPI.getSceneElements();
+
+  // Build animation queue
+  type AnimationItem = { element: any; delay: number };
+  const animationQueue: AnimationItem[] = [];
+  let currentDelay = 0;
+
+  // Text position (offset by accent bar if present)
+  const textX = posX + accentBarWidth + accentGap;
+  const textY = posY;
+
+  // 1. Create accent bar if specified
+  if (accent && accent !== "none") {
+    const accentElement = {
+      id: generateId(),
+      type: "rectangle" as const,
+      x: posX,
+      y: posY,
+      width: accentBarWidth,
+      height: height,
+      angle: 0,
+      strokeColor: "transparent",
+      backgroundColor: COLOR_MAP[accent] || COLOR_MAP.purple,
+      fillStyle: "solid" as const,
+      strokeWidth: 0,
+      strokeStyle: "solid" as const,
+      roughness: 0,
+      opacity: 100,
+      groupIds: [groupId],
+      frameId: null,
+      index: "a0" as const,
+      roundness: { type: 3 },
+      seed: Math.floor(Math.random() * 100000),
+      version: 1,
+      versionNonce: Math.floor(Math.random() * 100000),
+      isDeleted: false,
+      boundElements: null,
+      updated: Date.now(),
+      link: null,
+      locked: false,
+    };
+    animationQueue.push({ element: accentElement, delay: currentDelay });
+    currentDelay += 50; // Small delay before text starts
+  }
+
+  // 2. Create text elements word by word for typing animation
+  const words = displayContent.split(" ");
+  let currentText = "";
+
+  for (let i = 0; i < words.length; i++) {
+    currentText = words.slice(0, i + 1).join(" ");
+    const { width: currentWidth } = measureText(currentText, fontSize, fontFamily);
+
+    const textElement = {
+      id: generateId(),
+      type: "text" as const,
+      x: textX,
+      y: textY,
+      width: currentWidth,
+      height: height,
+      angle: 0,
+      strokeColor: "#1e1e1e",
+      backgroundColor: "transparent",
+      fillStyle: "solid" as const,
+      strokeWidth: 2,
+      strokeStyle: "solid" as const,
+      roughness: 1,
+      opacity: 100,
+      groupIds: [groupId],
+      frameId: null,
+      index: "a0" as const,
+      roundness: null,
+      seed: Math.floor(Math.random() * 100000),
+      version: 1,
+      versionNonce: Math.floor(Math.random() * 100000),
+      isDeleted: false,
+      boundElements: null,
+      updated: Date.now(),
+      link: null,
+      locked: false,
+      text: currentText,
+      fontSize: fontSize,
+      fontFamily: fontFamily,
+      textAlign: "left" as const,
+      verticalAlign: "top" as const,
+      containerId: null,
+      originalText: currentText,
+      autoResize: true,
+      lineHeight: 1.25,
+    };
+
+    // Mark intermediate text elements for removal (except the last one)
+    animationQueue.push({
+      element: { ...textElement, _isIntermediate: i < words.length - 1 },
+      delay: currentDelay
+    });
+    currentDelay += TEXT_WORD_DELAY;
+  }
+
+  // 3. Create underlines if specified
+  if (underline && underline.length > 0) {
+    const underlineY = textY + height + 2; // Just below the text
+    const underlineHeight = 3;
+
+    for (const word of underline) {
+      const position = measureSubstringPosition(displayContent, word, fontSize, fontFamily);
+      if (position) {
+        const underlineElement = {
+          id: generateId(),
+          type: "rectangle" as const,
+          x: textX + position.startX,
+          y: underlineY,
+          width: position.width,
+          height: underlineHeight,
+          angle: 0,
+          strokeColor: "transparent",
+          backgroundColor: COLOR_MAP[underline_color] || COLOR_MAP.purple,
+          fillStyle: "solid" as const,
+          strokeWidth: 0,
+          strokeStyle: "solid" as const,
+          roughness: 0,
+          opacity: 100,
+          groupIds: [groupId],
+          frameId: null,
+          index: "a0" as const,
+          roundness: { type: 3 },
+          seed: Math.floor(Math.random() * 100000),
+          version: 1,
+          versionNonce: Math.floor(Math.random() * 100000),
+          isDeleted: false,
+          boundElements: null,
+          updated: Date.now(),
+          link: null,
+          locked: false,
+        };
+        animationQueue.push({ element: underlineElement, delay: currentDelay });
+        currentDelay += 50; // Small delay between underlines
+      }
+    }
+  }
+
+  // Animate: add elements sequentially, removing intermediate text elements
+  // Use object to avoid closure issues with setTimeout
+  const state = {
+    elements: [...existingElements],
+    lastTextElementId: null as string | null,
   };
 
-  excalidrawAPI.updateScene({
-    elements: [...elements, textElement],
+  animationQueue.forEach(({ element, delay }) => {
+    setTimeout(() => {
+      // If this is a text element and there's a previous intermediate one, remove it
+      if (element.type === "text" && state.lastTextElementId) {
+        state.elements = state.elements.filter(el => el.id !== state.lastTextElementId);
+      }
+
+      // Add the new element (without the _isIntermediate flag)
+      const { _isIntermediate, ...cleanElement } = element;
+      state.elements = [...state.elements, cleanElement];
+
+      // Track intermediate text elements for removal
+      if (element.type === "text" && _isIntermediate) {
+        state.lastTextElementId = cleanElement.id;
+      } else if (element.type === "text") {
+        state.lastTextElementId = null; // Final text element, don't remove
+      }
+
+      excalidrawAPI.updateScene({
+        elements: state.elements,
+      });
+    }, delay);
   });
 
-  // Track for relative positioning
-  setLastElementId(elementId);
+  // Track for relative positioning (use group ID)
+  setLastElementId(`group:${groupId}`);
 }
 
 /**
@@ -677,40 +879,19 @@ function handleAddLatex(
       height
     );
 
-    const elementId = generateId();
-    const fileId = generateId();
+    const fileId = generateId() as any; // FileId branded type
 
-    const imageElement = {
-      id: elementId,
-      type: "image" as const,
-      x: posX,
-      y: posY,
-      width: width,
-      height: height,
-      angle: 0,
-      strokeColor: "transparent",
-      backgroundColor: "transparent",
-      fillStyle: "solid" as const,
-      strokeWidth: 0,
-      strokeStyle: "solid" as const,
-      roughness: 0,
-      opacity: 100,
-      groupIds: [],
-      frameId: null,
-      index: "a0" as const,
-      roundness: null,
-      seed: Math.floor(Math.random() * 100000),
-      version: 1,
-      versionNonce: Math.floor(Math.random() * 100000),
-      isDeleted: false,
-      boundElements: null,
-      updated: Date.now(),
-      link: null,
-      locked: false,
-      fileId,
-      status: "saved" as const,
-      scale: [1, 1] as [number, number],
-    };
+    // Use convertToExcalidrawElements for cleaner element creation
+    const [imageElement] = convertToExcalidrawElements([
+      {
+        type: "image",
+        x: posX,
+        y: posY,
+        width,
+        height,
+        fileId,
+      },
+    ]);
 
     excalidrawAPI.updateScene({
       elements: [...elements, imageElement],
@@ -727,7 +908,7 @@ function handleAddLatex(
       },
     ]);
 
-    setLastElementId(elementId);
+    setLastElementId(imageElement.id);
   } catch (error) {
     console.error("[handleAddLatex] Failed to render LaTeX:", error);
     // Fallback to plain text if LaTeX rendering fails
@@ -736,49 +917,22 @@ function handleAddLatex(
     const { width, height } = measureText(content, fontSize, fontFamily);
     const { x: posX, y: posY } = calculatePosition(excalidrawAPI, position, width, height);
 
-    const elementId = generateId();
-    const textElement = {
-      id: elementId,
-      type: "text" as const,
-      x: posX,
-      y: posY,
-      width,
-      height,
-      angle: 0,
-      strokeColor: "#1e1e1e",
-      backgroundColor: "transparent",
-      fillStyle: "solid" as const,
-      strokeWidth: 2,
-      strokeStyle: "solid" as const,
-      roughness: 1,
-      opacity: 100,
-      groupIds: [],
-      frameId: null,
-      index: "a0" as const,
-      roundness: null,
-      seed: Math.floor(Math.random() * 100000),
-      version: 1,
-      versionNonce: Math.floor(Math.random() * 100000),
-      isDeleted: false,
-      boundElements: null,
-      updated: Date.now(),
-      link: null,
-      locked: false,
-      text: content,
-      fontSize,
-      fontFamily,
-      textAlign: "left" as const,
-      verticalAlign: "top" as const,
-      containerId: null,
-      originalText: content,
-      autoResize: true,
-      lineHeight: 1.25,
-    };
+    // Use convertToExcalidrawElements for cleaner element creation
+    const [textElement] = convertToExcalidrawElements([
+      {
+        type: "text",
+        x: posX,
+        y: posY,
+        text: content,
+        fontSize,
+        fontFamily,
+      },
+    ]);
 
     excalidrawAPI.updateScene({
       elements: [...elements, textElement],
     });
-    setLastElementId(elementId);
+    setLastElementId(textElement.id);
   }
 }
 
@@ -829,7 +983,6 @@ async function handleShowImage(
   }
 
   try {
-
     // Get image dimensions
     const img = new Image();
     await new Promise<void>((resolve, reject) => {
@@ -844,9 +997,8 @@ async function handleShowImage(
     const width = img.width * scale;
     const height = img.height * scale;
 
-    // Generate IDs
-    const fileId = generateId();
-    const elementId = generateId();
+    // Generate file ID
+    const fileId = generateId() as any; // FileId branded type
 
     // Calculate position based on position parameter
     const elements = excalidrawAPI.getSceneElements();
@@ -857,38 +1009,17 @@ async function handleShowImage(
       height
     );
 
-    // Create image element
-    const imageElement = {
-      id: elementId,
-      type: "image" as const,
-      x: posX,
-      y: posY,
-      width,
-      height,
-      angle: 0,
-      strokeColor: "transparent",
-      backgroundColor: "transparent",
-      fillStyle: "solid" as const,
-      strokeWidth: 2,
-      strokeStyle: "solid" as const,
-      roughness: 1,
-      opacity: 100,
-      groupIds: [],
-      frameId: null,
-      index: "a0" as const,
-      roundness: null,
-      seed: Math.floor(Math.random() * 100000),
-      version: 1,
-      versionNonce: Math.floor(Math.random() * 100000),
-      isDeleted: false,
-      boundElements: null,
-      updated: Date.now(),
-      link: null,
-      locked: false,
-      fileId,
-      status: "saved" as const,
-      scale: [1, 1] as [number, number],
-    };
+    // Use convertToExcalidrawElements for cleaner element creation
+    const [imageElement] = convertToExcalidrawElements([
+      {
+        type: "image",
+        x: posX,
+        y: posY,
+        width,
+        height,
+        fileId,
+      },
+    ]);
 
     excalidrawAPI.updateScene({
       elements: [...elements, imageElement],
@@ -908,7 +1039,7 @@ async function handleShowImage(
     ]);
 
     // Track for relative positioning
-    setLastElementId(elementId);
+    setLastElementId(imageElement.id);
   } catch {
     handleAddText(excalidrawAPI, { content: `[Image failed: ${query || url}]`, size: "medium", position });
   }
@@ -1303,140 +1434,61 @@ function handleAnnotate(
 
   // Fallback: create instant element (for arrows or when no callback)
   const elements = excalidrawAPI.getSceneElements();
-  const elementId = generateId();
 
-  let element: any;
+  // Build skeleton based on shape type
+  let skeleton: any;
+  const baseStyle = {
+    strokeColor: "#e03131",
+    strokeWidth: 3,
+  };
 
   if (shape === "circle") {
-    element = {
-      id: elementId,
+    skeleton = {
       type: "ellipse",
       x: sceneX,
       y: sceneY,
       width: sceneWidth,
       height: sceneHeight,
-      angle: 0,
-      strokeColor: "#e03131",
-      backgroundColor: "transparent",
-      fillStyle: "solid",
-      strokeWidth: 3,
-      strokeStyle: "solid",
-      roughness: 1,
-      opacity: 100,
-      groupIds: [],
-      frameId: null,
-      index: "a0",
-      roundness: { type: 2 },
-      seed: Math.floor(Math.random() * 100000),
-      version: 1,
-      versionNonce: Math.floor(Math.random() * 100000),
-      isDeleted: false,
-      boundElements: null,
-      updated: Date.now(),
-      link: null,
-      locked: false,
+      ...baseStyle,
     };
   } else if (shape === "rectangle") {
-    element = {
-      id: elementId,
+    skeleton = {
       type: "rectangle",
       x: sceneX,
       y: sceneY,
       width: sceneWidth,
       height: sceneHeight,
-      angle: 0,
-      strokeColor: "#e03131",
-      backgroundColor: "transparent",
-      fillStyle: "solid",
-      strokeWidth: 3,
-      strokeStyle: "solid",
-      roughness: 1,
-      opacity: 100,
-      groupIds: [],
-      frameId: null,
-      index: "a0",
-      roundness: { type: 3 },
-      seed: Math.floor(Math.random() * 100000),
-      version: 1,
-      versionNonce: Math.floor(Math.random() * 100000),
-      isDeleted: false,
-      boundElements: null,
-      updated: Date.now(),
-      link: null,
-      locked: false,
+      ...baseStyle,
     };
   } else if (shape === "arrow") {
     const arrowLength = Math.max(sceneWidth, sceneHeight);
-    element = {
-      id: elementId,
+    skeleton = {
       type: "arrow",
       x: sceneX - arrowLength,
       y: sceneY - arrowLength / 2,
-      width: arrowLength,
-      height: arrowLength / 2,
-      angle: 0,
-      strokeColor: "#e03131",
-      backgroundColor: "transparent",
-      fillStyle: "solid",
-      strokeWidth: 3,
-      strokeStyle: "solid",
-      roughness: 1,
-      opacity: 100,
-      groupIds: [],
-      frameId: null,
-      index: "a0",
-      roundness: { type: 2 },
-      seed: Math.floor(Math.random() * 100000),
-      version: 1,
-      versionNonce: Math.floor(Math.random() * 100000),
-      isDeleted: false,
-      boundElements: null,
-      updated: Date.now(),
-      link: null,
-      locked: false,
-      points: [[0, 0], [arrowLength, arrowLength / 2]],
-      lastCommittedPoint: null,
-      startBinding: null,
-      endBinding: null,
-      startArrowhead: null,
-      endArrowhead: "arrow",
+      points: [[0, 0], [arrowLength, arrowLength / 2]] as [number, number][],
+      ...baseStyle,
     };
   } else {
-    element = {
-      id: elementId,
+    // Default to ellipse
+    skeleton = {
       type: "ellipse",
       x: sceneX,
       y: sceneY,
       width: sceneWidth,
       height: sceneHeight,
-      angle: 0,
-      strokeColor: "#e03131",
-      backgroundColor: "transparent",
-      fillStyle: "solid",
-      strokeWidth: 3,
-      strokeStyle: "solid",
-      roughness: 1,
-      opacity: 100,
-      groupIds: [],
-      frameId: null,
-      index: "a0",
-      roundness: { type: 2 },
-      seed: Math.floor(Math.random() * 100000),
-      version: 1,
-      versionNonce: Math.floor(Math.random() * 100000),
-      isDeleted: false,
-      boundElements: null,
-      updated: Date.now(),
-      link: null,
-      locked: false,
+      ...baseStyle,
     };
   }
+
+  // Use convertToExcalidrawElements for cleaner element creation
+  const [element] = convertToExcalidrawElements([skeleton]);
 
   excalidrawAPI.updateScene({
     elements: [...elements, element],
   });
 
-  setLastElementId(elementId);
+  setLastElementId(element.id);
   console.log(`[Annotate] Drew ${shape} around "${target}" at (${x.toFixed(2)}, ${y.toFixed(2)})`);
 }
 
@@ -1445,65 +1497,55 @@ function handleAnnotate(
 // ============================================
 
 /**
- * Create a p5.js animation iframe overlaid on the Excalidraw canvas.
- * The iframe is positioned in scene coordinates and updates when the canvas scrolls/zooms.
+ * Loading placeholder HTML for animations while code is being generated
  */
-function handleAnimate(
-  excalidrawAPI: ExcalidrawAPI,
-  params: ToolParams
-): void {
-  const { code, position = "center" } = params;
+const LOADING_PLACEHOLDER_HTML = `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      background: #1a1a2e;
+      overflow: hidden;
+      font-family: system-ui, -apple-system, sans-serif;
+      color: #a0a0a0;
+    }
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid #333;
+      border-top-color: #9D7CD8;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .text {
+      margin-top: 16px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="spinner"></div>
+  <div class="text">Generating animation...</div>
+</body>
+</html>
+`;
 
-  if (!code) {
-    console.error("[handleAnimate] No code provided");
-    return;
-  }
-
-  // Animation dimensions - responsive to viewport
-  const { width: animWidth, height: animHeight } = getResponsiveSize(600, 400, excalidrawAPI);
-
-  // Calculate position based on position parameter
-  const { x: posX, y: posY } = calculatePosition(
-    excalidrawAPI,
-    position as PositionType,
-    animWidth,
-    animHeight
-  );
-
-  // Generate unique ID for this animation
-  const animationId = generateId();
-
-  // Find the Excalidraw container to attach the overlay
-  const excalidrawContainer = document.querySelector(".excalidraw");
-  if (!excalidrawContainer) {
-    console.error("[handleAnimate] Could not find Excalidraw container");
-    return;
-  }
-
-  // Create container div for the iframe
-  const container = document.createElement("div");
-  container.id = `animation-${animationId}`;
-  container.style.cssText = `
-    position: absolute;
-    pointer-events: auto;
-    z-index: 10;
-    border-radius: 12px;
-    overflow: hidden;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-    border: 2px solid #333;
-  `;
-
-  // Create iframe
-  const iframe = document.createElement("iframe");
-  iframe.style.cssText = `
-    width: ${animWidth}px;
-    height: ${animHeight}px;
-    border: none;
-    display: block;
-  `;
-
-  // Build the HTML content for the iframe
-  const htmlContent = `
+/**
+ * Build p5.js animation HTML content
+ */
+function buildAnimationHTML(code: string): string {
+  return `
 <!DOCTYPE html>
 <html>
 <head>
@@ -1535,15 +1577,80 @@ function handleAnimate(
 </body>
 </html>
   `;
+}
+
+/**
+ * Fetch p5.js code from the API
+ */
+async function fetchP5Code(prompt: string): Promise<string | null> {
+  try {
+    const response = await fetch("/api/p5", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt }),
+    });
+
+    if (!response.ok) {
+      console.error("[fetchP5Code] API error:", response.status);
+      return null;
+    }
+
+    const data = await response.json();
+    return data.code || null;
+  } catch (err) {
+    console.error("[fetchP5Code] Failed to fetch:", err);
+    return null;
+  }
+}
+
+/**
+ * Create animation overlay container and iframe
+ */
+function createAnimationOverlay(
+  excalidrawAPI: ExcalidrawAPI,
+  animationId: string,
+  posX: number,
+  posY: number,
+  animWidth: number,
+  animHeight: number,
+  initialHTML: string
+): AnimationOverlay | null {
+  const excalidrawContainer = document.querySelector(".excalidraw");
+  if (!excalidrawContainer) {
+    console.error("[createAnimationOverlay] Could not find Excalidraw container");
+    return null;
+  }
+
+  // Create container div for the iframe
+  const container = document.createElement("div");
+  container.id = `animation-${animationId}`;
+  container.style.cssText = `
+    position: absolute;
+    pointer-events: auto;
+    z-index: 10;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    border: 2px solid #333;
+  `;
+
+  // Create iframe
+  const iframe = document.createElement("iframe");
+  iframe.style.cssText = `
+    width: ${animWidth}px;
+    height: ${animHeight}px;
+    border: none;
+    display: block;
+  `;
 
   container.appendChild(iframe);
   excalidrawContainer.appendChild(container);
 
-  // Write content to iframe
+  // Write initial content to iframe
   const doc = iframe.contentDocument || iframe.contentWindow?.document;
   if (doc) {
     doc.open();
-    doc.write(htmlContent);
+    doc.write(initialHTML);
     doc.close();
   }
 
@@ -1584,25 +1691,138 @@ function handleAnimate(
   // Initial position update
   updatePosition();
 
-  // Listen for scroll/zoom changes
-  const observer = new MutationObserver(() => {
-    updatePosition();
+  // Use Excalidraw's native onScrollChange API for reliable position sync
+  // This is the proper way to track scroll/zoom changes (not DOM events)
+  const unsubscribe = excalidrawAPI.onScrollChange((scrollX: number, scrollY: number, zoom: { value: number }) => {
+    const zoomValue = zoom?.value || 1;
+
+    // Convert scene coordinates to screen coordinates
+    const screenX = (posX + scrollX) * zoomValue;
+    const screenY = (posY + scrollY) * zoomValue;
+    const screenWidth = animWidth * zoomValue;
+    const screenHeight = animHeight * zoomValue;
+
+    container.style.left = `${screenX}px`;
+    container.style.top = `${screenY}px`;
+    container.style.width = `${screenWidth}px`;
+    container.style.height = `${screenHeight}px`;
+    iframe.style.width = `${screenWidth}px`;
+    iframe.style.height = `${screenHeight}px`;
+    iframe.style.transform = `scale(${zoomValue})`;
+    iframe.style.transformOrigin = "top left";
   });
 
-  // Observe the Excalidraw canvas for changes
-  const canvas = document.querySelector(".excalidraw__canvas");
-  if (canvas) {
-    observer.observe(canvas, { attributes: true });
+  // Store the unsubscribe function for cleanup
+  overlay.unsubscribe = unsubscribe;
+
+  return overlay;
+}
+
+/**
+ * Update an existing animation overlay with new HTML content
+ */
+function updateAnimationContent(overlay: AnimationOverlay, htmlContent: string): void {
+  const doc = overlay.iframe.contentDocument || overlay.iframe.contentWindow?.document;
+  if (doc) {
+    doc.open();
+    doc.write(htmlContent);
+    doc.close();
   }
+}
 
-  // Also update on pointer events (pan/zoom)
-  excalidrawContainer.addEventListener("pointermove", updatePosition);
-  excalidrawContainer.addEventListener("wheel", updatePosition);
+/**
+ * Create a p5.js animation iframe overlaid on the Excalidraw canvas.
+ * If code is not provided, shows a loading placeholder and fetches code async.
+ * The iframe is positioned in scene coordinates and updates when the canvas scrolls/zooms.
+ */
+function handleAnimate(
+  excalidrawAPI: ExcalidrawAPI,
+  params: ToolParams
+): void {
+  const { code, prompt, position = "center" } = params;
 
-  // Track for relative positioning
+  // Animation dimensions - responsive to viewport
+  const { width: animWidth, height: animHeight } = getResponsiveSize(600, 400, excalidrawAPI);
+
+  // Calculate position based on position parameter
+  const { x: posX, y: posY } = calculatePosition(
+    excalidrawAPI,
+    position as PositionType,
+    animWidth,
+    animHeight
+  );
+
+  // Generate unique ID for this animation
+  const animationId = generateId();
+
+  // Track for relative positioning immediately (so next elements position correctly)
   setLastElementId(`animation:${animationId}`);
 
-  console.log(`[handleAnimate] Created animation ${animationId} at (${posX}, ${posY})`);
+  if (code) {
+    // Code is already available - render immediately
+    const overlay = createAnimationOverlay(
+      excalidrawAPI,
+      animationId,
+      posX,
+      posY,
+      animWidth,
+      animHeight,
+      buildAnimationHTML(code)
+    );
+    if (overlay) {
+      console.log(`[handleAnimate] Created animation ${animationId} at (${posX}, ${posY})`);
+    }
+  } else if (prompt) {
+    // No code yet - show placeholder and fetch async
+    console.log(`[handleAnimate] No code provided, showing placeholder and fetching for prompt: ${prompt}`);
+
+    const overlay = createAnimationOverlay(
+      excalidrawAPI,
+      animationId,
+      posX,
+      posY,
+      animWidth,
+      animHeight,
+      LOADING_PLACEHOLDER_HTML
+    );
+
+    if (overlay) {
+      // Fetch code async and update when ready
+      fetchP5Code(prompt).then((fetchedCode) => {
+        if (fetchedCode) {
+          console.log(`[handleAnimate] Got code for ${animationId}, updating content`);
+          updateAnimationContent(overlay, buildAnimationHTML(fetchedCode));
+        } else {
+          // Show error state
+          updateAnimationContent(overlay, `
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <style>
+                body {
+                  margin: 0;
+                  padding: 20px;
+                  display: flex;
+                  justify-content: center;
+                  align-items: center;
+                  min-height: 100vh;
+                  background: #1a1a2e;
+                  color: #ff6b6b;
+                  font-family: system-ui, sans-serif;
+                  font-size: 14px;
+                  text-align: center;
+                }
+              </style>
+            </head>
+            <body>Failed to generate animation</body>
+            </html>
+          `);
+        }
+      });
+    }
+  } else {
+    console.error("[handleAnimate] No code or prompt provided");
+  }
 }
 
 /**
@@ -1610,6 +1830,10 @@ function handleAnimate(
  */
 function clearAnimationOverlays(): void {
   animationOverlays.forEach((overlay) => {
+    // Unsubscribe from scroll/zoom events to prevent memory leaks
+    if (overlay.unsubscribe) {
+      overlay.unsubscribe();
+    }
     overlay.container.remove();
   });
   animationOverlays.clear();

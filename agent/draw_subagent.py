@@ -20,7 +20,7 @@ TOOLS = [
         function_declarations=[
             types.FunctionDeclaration(
                 name="add_text",
-                description="Write text on the whiteboard. Use for titles, equations, definitions, key points.",
+                description="Write text on the whiteboard. Use for titles, equations, definitions, key points. Supports emoji prefix, colored side accent bar, and underlined words for emphasis.",
                 parameters=types.Schema(
                     type=types.Type.OBJECT,
                     properties={
@@ -36,6 +36,25 @@ TOOLS = [
                         "position": types.Schema(
                             type=types.Type.STRING,
                             description="Position: 'center' (default), 'below-last', 'right-of-last', or 'top-left', 'top-center', etc."
+                        ),
+                        "emoji": types.Schema(
+                            type=types.Type.STRING,
+                            description="Optional emoji to prepend to text (e.g., '🌱', '⚡', '💡', '🔬')"
+                        ),
+                        "accent": types.Schema(
+                            type=types.Type.STRING,
+                            description="Optional colored side accent bar for emphasis",
+                            enum=["none", "purple", "green", "blue", "red", "orange"]
+                        ),
+                        "underline": types.Schema(
+                            type=types.Type.ARRAY,
+                            description="List of specific words to underline for emphasis (e.g., ['photosynthesis', 'glucose'])",
+                            items=types.Schema(type=types.Type.STRING)
+                        ),
+                        "underline_color": types.Schema(
+                            type=types.Type.STRING,
+                            description="Color for underlined words",
+                            enum=["purple", "green", "blue", "red", "orange"]
                         )
                     },
                     required=["content"]
@@ -176,32 +195,46 @@ SYSTEM_PROMPT = """You are a visual rendering agent for educational content. Con
 - mindmap: categories/hierarchies
 
 **add_text** - Use for equations, definitions, labels
+- Use `emoji` for visual flair on titles (🌱 nature, ⚡ energy, 💡 ideas, 🔬 science, 🧬 biology, ⚛️ physics, 🧪 chemistry)
+- Use `accent` bar (purple/green/blue/red/orange) for important concepts or definitions
+- Use `underline` to emphasize key terms within the text (1-2 words max)
+
+# TEXT STYLING GUIDE
+
+Titles: Use emoji + accent for engaging headers
+  {"content": "Photosynthesis", "size": "large", "emoji": "🌱", "accent": "green"}
+
+Definitions: Use accent bar to make them stand out
+  {"content": "Mitosis is the process of cell division", "accent": "blue", "underline": ["Mitosis"], "underline_color": "blue"}
+
+Key concepts: Underline the important terms
+  {"content": "Energy is converted from sunlight to glucose", "underline": ["Energy", "glucose"], "underline_color": "green"}
 
 # EXAMPLES
 
 "what does a heart look like" → static structure
-[{"tool": "add_text", "params": {"content": "Heart Anatomy", "size": "large", "position": "center"}},
+[{"tool": "add_text", "params": {"content": "Heart Anatomy", "size": "large", "emoji": "❤️", "accent": "red", "position": "center"}},
  {"tool": "show_image", "params": {"query": "human heart anatomy diagram labeled", "position": "below-last"}}]
 
 "how blood flows through the heart" → motion ("flows")
-[{"tool": "add_text", "params": {"content": "Blood Circulation", "size": "large", "position": "center"}},
+[{"tool": "add_text", "params": {"content": "Blood Circulation", "size": "large", "emoji": "🫀", "accent": "red", "position": "center"}},
  {"tool": "animate", "params": {"prompt": "blood circulation - red particles flowing through heart chambers, pumping rhythmically in a loop", "position": "below-last"}}]
 
 "explain the water cycle" → repeating process
-[{"tool": "add_text", "params": {"content": "The Water Cycle", "size": "large", "position": "center"}},
+[{"tool": "add_text", "params": {"content": "The Water Cycle", "size": "large", "emoji": "💧", "accent": "blue", "position": "center"}},
  {"tool": "draw_diagram", "params": {"type": "cycle", "nodes": ["Evaporation", "Condensation", "Precipitation", "Collection"], "position": "below-last"}}]
 
 "watch how a ball falls" → motion ("watch", "falls")
-[{"tool": "add_text", "params": {"content": "Gravity in Action", "size": "large", "position": "center"}},
+[{"tool": "add_text", "params": {"content": "Gravity in Action", "size": "large", "emoji": "⚡", "accent": "purple", "position": "center"}},
  {"tool": "animate", "params": {"prompt": "gravity - ball falling and accelerating downward, bouncing with decreasing height", "position": "below-last"}}]
 
 "what happens when energy is released" → change ("what happens", "released")
-[{"tool": "add_text", "params": {"content": "Exothermic Reaction", "size": "large", "position": "center"}},
+[{"tool": "add_text", "params": {"content": "Exothermic Reaction", "size": "large", "emoji": "🔥", "accent": "orange", "position": "center"}},
  {"tool": "animate", "params": {"prompt": "exothermic reaction - particles explode outward with hot colors (red, orange, yellow)", "position": "below-last"}}]
 
 "show me the pythagorean theorem" → equation
-[{"tool": "add_text", "params": {"content": "Pythagorean Theorem", "size": "large", "position": "center"}},
- {"tool": "add_text", "params": {"content": "a² + b² = c²", "size": "large", "position": "below-last"}}]
+[{"tool": "add_text", "params": {"content": "Pythagorean Theorem", "size": "large", "emoji": "📐", "accent": "purple", "position": "center"}},
+ {"tool": "add_text", "params": {"content": "a² + b² = c²", "size": "large", "underline": ["a²", "b²", "c²"], "underline_color": "purple", "position": "below-last"}}]
 
 # ANNOTATION MODE
 

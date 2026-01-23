@@ -50,14 +50,17 @@ export default function GeminiDirectIndex() {
           </Link>
         </div>
 
-        <div className="bg-gray-800 rounded-lg p-6 opacity-50">
+        <div className="bg-gray-800 rounded-lg p-6">
           <h2 className="text-xl font-semibold mb-2">Phase 4: Full Integration</h2>
           <p className="text-gray-400 mb-4">
-            Latency comparison and feature parity testing.
+            Full Excalidraw integration with draw() and clear_board() tools.
           </p>
-          <span className="inline-block bg-gray-600 px-4 py-2 rounded cursor-not-allowed">
-            Coming Soon
-          </span>
+          <Link
+            href="/experiments/gemini-direct/phase4"
+            className="inline-block bg-green-600 hover:bg-green-700 px-4 py-2 rounded"
+          >
+            Open Phase 4
+          </Link>
         </div>
       </div>
 
