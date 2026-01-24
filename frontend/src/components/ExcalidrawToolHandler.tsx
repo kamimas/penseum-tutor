@@ -2,7 +2,6 @@
 import { useEffect, useRef } from "react";
 import type { Room } from "livekit-client";
 import katex from "katex";
-import { convertToExcalidrawElements } from "@excalidraw/excalidraw";
 import {
   SimpleDiagramInput,
   DiagramType,
@@ -12,6 +11,17 @@ import {
   LayoutNode,
   LayoutEdge,
 } from "../utils/diagramLayout";
+import type { AnimatedMathGraphResult } from "./AnimatedMathGraph";
+
+// Lazy load Excalidraw to avoid SSR issues (navigator is not defined)
+let convertToExcalidrawElements: any = null;
+async function getConvertToExcalidrawElements() {
+  if (!convertToExcalidrawElements) {
+    const module = await import("@excalidraw/excalidraw");
+    convertToExcalidrawElements = module.convertToExcalidrawElements;
+  }
+  return convertToExcalidrawElements;
+}
 
 // ============================================
 // TYPES
@@ -65,6 +75,10 @@ interface ToolParams {
   // Animate params
   prompt?: string;
   code?: string;  // p5.js code (resolved by API)
+  // Math graph params
+  expression?: string;  // e.g., "sin(x)", "x^2"
+  xMin?: number;
+  xMax?: number;
 }
 
 // Track last element for relative positioning (lookup current bounds when needed)
@@ -73,19 +87,19 @@ interface ToolParams {
 // For animations: stores animationId (prefixed with "animation:")
 let lastElementId: string | null = null;
 
-// Track animation iframes for cleanup and positioning
-interface AnimationOverlay {
+// Track animations as native Excalidraw elements
+// We render p5.js to a hidden canvas, capture frames, and update an image element
+interface AnimationElement {
   id: string;
-  iframe: HTMLIFrameElement;
-  container: HTMLDivElement;
-  x: number;
-  y: number;
+  elementId: string;  // Excalidraw element ID
+  fileId: string;     // Excalidraw file ID for the image
+  canvas: HTMLCanvasElement;
+  p5Instance: any;    // p5.js instance
+  intervalId: number; // For frame updates
   width: number;
   height: number;
-  // Cleanup function to unsubscribe from scroll/zoom events
-  unsubscribe?: () => void;
 }
-const animationOverlays: Map<string, AnimationOverlay> = new Map();
+const animationElements: Map<string, AnimationElement> = new Map();
 
 interface ExcalidrawToolHandlerProps {
   excalidrawAPI: ExcalidrawAPI;
@@ -109,6 +123,27 @@ export interface AnimatedAnnotateRequest {
 
 // Callback type for animated annotations
 export type OnAnimatedAnnotate = (request: AnimatedAnnotateRequest) => void;
+
+// Exported type for animated math graph requests
+export interface AnimatedMathGraphRequest {
+  expression: string;
+  // Screen pixel coordinates (for SVG overlay)
+  screenX: number;
+  screenY: number;
+  screenWidth: number;
+  screenHeight: number;
+  // Scene coordinates (for creating freedraw element after animation)
+  sceneX: number;
+  sceneY: number;
+  sceneWidth: number;
+  sceneHeight: number;
+  // Optional range
+  xMin?: number;
+  xMax?: number;
+}
+
+// Callback type for animated math graphs
+export type OnAnimatedMathGraph = (request: AnimatedMathGraphRequest) => void;
 
 // ============================================
 // UTILITIES
@@ -157,120 +192,10 @@ function getResponsiveSize(
   return { width: Math.round(width), height: Math.round(height) };
 }
 
-// ============================================
-// COLLISION DETECTION
-// ============================================
-
-/** Bounding box for collision detection */
-interface BoundingBox {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-/** Padding between elements to prevent visual crowding */
-const COLLISION_PADDING = 20;
-
-/**
- * Get all occupied regions on the canvas.
- * Includes Excalidraw elements and animation overlays.
- */
-function getOccupiedRegions(excalidrawAPI: ExcalidrawAPI): BoundingBox[] {
-  const regions: BoundingBox[] = [];
-
-  // Get all Excalidraw elements
-  const elements = excalidrawAPI.getSceneElements();
-  for (const el of elements) {
-    if (el.isDeleted) continue;
-    regions.push({
-      x: el.x,
-      y: el.y,
-      width: el.width,
-      height: el.height,
-    });
-  }
-
-  // Include animation overlays (they're not Excalidraw elements)
-  animationOverlays.forEach((overlay) => {
-    regions.push({
-      x: overlay.x,
-      y: overlay.y,
-      width: overlay.width,
-      height: overlay.height,
-    });
-  });
-
-  return regions;
-}
-
-/**
- * Check if a rectangle collides with any occupied region.
- * Returns true if there's an overlap.
- */
-function checkCollision(
-  rect: BoundingBox,
-  regions: BoundingBox[],
-  padding: number = COLLISION_PADDING
-): boolean {
-  for (const region of regions) {
-    // Add padding to the region for breathing room
-    const r = {
-      x: region.x - padding,
-      y: region.y - padding,
-      width: region.width + padding * 2,
-      height: region.height + padding * 2,
-    };
-
-    // AABB collision check
-    const overlaps =
-      rect.x < r.x + r.width &&
-      rect.x + rect.width > r.x &&
-      rect.y < r.y + r.height &&
-      rect.y + rect.height > r.y;
-
-    if (overlaps) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
- * Find a non-overlapping position for an element.
- * Strategy: Start at proposed position, shift down until no collision.
- */
-function findNonOverlappingPosition(
-  excalidrawAPI: ExcalidrawAPI,
-  proposedX: number,
-  proposedY: number,
-  width: number,
-  height: number
-): { x: number; y: number } {
-  const regions = getOccupiedRegions(excalidrawAPI);
-
-  let x = proposedX;
-  let y = proposedY;
-
-  const rect: BoundingBox = { x, y, width, height };
-
-  // Maximum iterations to prevent infinite loop
-  const maxIterations = 50;
-  let iterations = 0;
-
-  while (checkCollision(rect, regions) && iterations < maxIterations) {
-    // Shift down by the collision padding + small step
-    y += COLLISION_PADDING + 10;
-    rect.y = y;
-    iterations++;
-  }
-
-  return { x, y };
-}
-
 /**
  * Scroll the viewport to ensure a position is visible.
  * Called after placing an element to keep it in view.
+ * Uses Excalidraw's native scrollToContent with smooth animation.
  */
 function scrollToShowPosition(
   excalidrawAPI: ExcalidrawAPI,
@@ -280,13 +205,11 @@ function scrollToShowPosition(
   height: number
 ): void {
   const appState = excalidrawAPI.getAppState();
-  const { scrollX, scrollY, zoom, width: viewportWidth, height: viewportHeight } = appState;
+  const { scrollY, zoom, height: viewportHeight } = appState;
   const zoomValue = zoom?.value || 1;
 
   // Calculate viewport bounds in scene coordinates
-  const viewportLeft = -scrollX;
   const viewportTop = -scrollY;
-  const viewportW = (viewportWidth || 1280) / zoomValue;
   const viewportH = (viewportHeight || 720) / zoomValue;
   const viewportBottom = viewportTop + viewportH;
 
@@ -295,11 +218,15 @@ function scrollToShowPosition(
   const padding = 50; // Keep some padding from edge
 
   if (elementBottom > viewportBottom - padding) {
-    // Need to scroll down
-    const newScrollY = -(y - padding);
+    // Calculate how much we need to scroll down
+    const scrollAmount = elementBottom - viewportBottom + padding + 50;
+
+    // Update scroll position directly - more reliable than scrollToContent
+    // scrollY is negative (scroll down = more negative)
+    const newScrollY = scrollY - scrollAmount;
+
     excalidrawAPI.updateScene({
       appState: {
-        ...appState,
         scrollY: newScrollY,
       },
     });
@@ -333,8 +260,12 @@ function calculatePosition(
   let proposedX: number;
   let proposedY: number;
 
+  // If there's existing content and position is "center", place below last instead
+  // This prevents new batches from overlapping previous content
+  const effectivePosition = (position === "center" && lastElementId) ? "below-last" : position;
+
   // Handle relative positions - lookup current bounds from scene
-  if (position === "below-last" || position === "right-of-last") {
+  if (effectivePosition === "below-last" || effectivePosition === "right-of-last") {
     let lastBounds: { x: number; y: number; width: number; height: number } | null = null;
 
     if (lastElementId) {
@@ -357,16 +288,19 @@ function calculatePosition(
           lastBounds = { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
         }
       } else if (lastElementId.startsWith("animation:")) {
-        // Look up animation overlay bounds
+        // Animation elements are now native Excalidraw elements, look them up directly
         const animId = lastElementId.slice(10);
-        const overlay = animationOverlays.get(animId);
-        if (overlay) {
-          lastBounds = {
-            x: overlay.x,
-            y: overlay.y,
-            width: overlay.width,
-            height: overlay.height,
-          };
+        const anim = animationElements.get(animId);
+        if (anim) {
+          const animElement = elements.find((el: any) => el.id === anim.elementId && !el.isDeleted);
+          if (animElement) {
+            lastBounds = {
+              x: animElement.x,
+              y: animElement.y,
+              width: animElement.width,
+              height: animElement.height,
+            };
+          }
         }
       } else {
         // Single element lookup
@@ -454,8 +388,8 @@ function calculatePosition(
     }
   }
 
-  // Apply collision detection - find non-overlapping position
-  const finalPosition = findNonOverlappingPosition(
+  // Auto-scroll to show the element if it's below the viewport
+  scrollToShowPosition(
     excalidrawAPI,
     proposedX,
     proposedY,
@@ -463,16 +397,7 @@ function calculatePosition(
     elementHeight
   );
 
-  // Auto-scroll to show the element if it's below the viewport
-  scrollToShowPosition(
-    excalidrawAPI,
-    finalPosition.x,
-    finalPosition.y,
-    elementWidth,
-    elementHeight
-  );
-
-  return finalPosition;
+  return { x: proposedX, y: proposedY };
 }
 
 /**
@@ -861,12 +786,14 @@ function handleAddText(
 /**
  * Handle LaTeX content by rendering to SVG and adding as image
  */
-function handleAddLatex(
+async function handleAddLatex(
   excalidrawAPI: ExcalidrawAPI,
   content: string,
   fontSize: number,
   position: PositionType
-): void {
+): Promise<void> {
+  const convert = await getConvertToExcalidrawElements();
+
   try {
     const { svg: dataUrl, width, height } = renderLatexToSvg(content, fontSize);
     const elements = excalidrawAPI.getSceneElements();
@@ -882,7 +809,7 @@ function handleAddLatex(
     const fileId = generateId() as any; // FileId branded type
 
     // Use convertToExcalidrawElements for cleaner element creation
-    const [imageElement] = convertToExcalidrawElements([
+    const [imageElement] = convert([
       {
         type: "image",
         x: posX,
@@ -918,7 +845,7 @@ function handleAddLatex(
     const { x: posX, y: posY } = calculatePosition(excalidrawAPI, position, width, height);
 
     // Use convertToExcalidrawElements for cleaner element creation
-    const [textElement] = convertToExcalidrawElements([
+    const [textElement] = convert([
       {
         type: "text",
         x: posX,
@@ -1010,7 +937,8 @@ async function handleShowImage(
     );
 
     // Use convertToExcalidrawElements for cleaner element creation
-    const [imageElement] = convertToExcalidrawElements([
+    const convert = await getConvertToExcalidrawElements();
+    const [imageElement] = convert([
       {
         type: "image",
         x: posX,
@@ -1384,12 +1312,12 @@ function handleDrawDiagram(
 // ANNOTATION HANDLER
 // ============================================
 
-function handleAnnotate(
+async function handleAnnotate(
   excalidrawAPI: ExcalidrawAPI,
   params: ToolParams,
   onAnimatedAnnotate?: OnAnimatedAnnotate
-): void {
-  const { shape = "circle", x = 0.5, y = 0.5, width = 0.1, height = 0.1, target = "" } = params;
+): Promise<void> {
+  const { shape = "circle", x = 0.5, y = 0.5, width = 0.1, height = 0.1 } = params;
 
   // Get viewport info to convert normalized coords
   const appState = excalidrawAPI.getAppState();
@@ -1417,7 +1345,6 @@ function handleAnnotate(
 
   // If callback provided and shape is circle/rectangle, use animated version
   if (onAnimatedAnnotate && (shape === "circle" || shape === "rectangle")) {
-    console.log(`[Annotate] Triggering animated ${shape} around "${target}" at (${x.toFixed(2)}, ${y.toFixed(2)})`);
     onAnimatedAnnotate({
       shape,
       screenX,
@@ -1482,361 +1409,383 @@ function handleAnnotate(
   }
 
   // Use convertToExcalidrawElements for cleaner element creation
-  const [element] = convertToExcalidrawElements([skeleton]);
+  const convert = await getConvertToExcalidrawElements();
+  const [element] = convert([skeleton]);
 
   excalidrawAPI.updateScene({
     elements: [...elements, element],
   });
 
   setLastElementId(element.id);
-  console.log(`[Annotate] Drew ${shape} around "${target}" at (${x.toFixed(2)}, ${y.toFixed(2)})`);
 }
 
 // ============================================
-// ANIMATION HANDLER - P5.JS IFRAME OVERLAY
+// MATH GRAPH HANDLER
 // ============================================
 
-/**
- * Loading placeholder HTML for animations while code is being generated
- */
-const LOADING_PLACEHOLDER_HTML = `
-<!DOCTYPE html>
-<html>
-<head>
-  <style>
-    body {
-      margin: 0;
-      padding: 0;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
-      min-height: 100vh;
-      background: #1a1a2e;
-      overflow: hidden;
-      font-family: system-ui, -apple-system, sans-serif;
-      color: #a0a0a0;
-    }
-    .spinner {
-      width: 40px;
-      height: 40px;
-      border: 3px solid #333;
-      border-top-color: #9D7CD8;
-      border-radius: 50%;
-      animation: spin 1s linear infinite;
-    }
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
-    .text {
-      margin-top: 16px;
-      font-size: 14px;
-    }
-  </style>
-</head>
-<body>
-  <div class="spinner"></div>
-  <div class="text">Generating animation...</div>
-</body>
-</html>
-`;
+// Default dimensions for math graphs
+const MATH_GRAPH_WIDTH = 300;
+const MATH_GRAPH_HEIGHT = 200;
 
-/**
- * Build p5.js animation HTML content
- */
-function buildAnimationHTML(code: string): string {
-  return `
-<!DOCTYPE html>
-<html>
-<head>
-  <style>
-    body {
-      margin: 0;
-      padding: 0;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      min-height: 100vh;
-      background: #1a1a2e;
-      overflow: hidden;
-    }
-    canvas {
-      display: block;
-    }
-  </style>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"><\/script>
-</head>
-<body>
-  <script>
-    window.onerror = function(msg, url, lineNo, columnNo, error) {
-      document.body.innerHTML = '<div style="color: #ff6b6b; padding: 20px; font-family: monospace;">Error: ' + msg + '</div>';
-      return false;
-    };
-    ${code}
-  <\/script>
-</body>
-</html>
-  `;
-}
-
-/**
- * Fetch p5.js code from the API
- */
-async function fetchP5Code(prompt: string): Promise<string | null> {
-  try {
-    const response = await fetch("/api/p5", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt }),
-    });
-
-    if (!response.ok) {
-      console.error("[fetchP5Code] API error:", response.status);
-      return null;
-    }
-
-    const data = await response.json();
-    return data.code || null;
-  } catch (err) {
-    console.error("[fetchP5Code] Failed to fetch:", err);
-    return null;
-  }
-}
-
-/**
- * Create animation overlay container and iframe
- */
-function createAnimationOverlay(
+async function handleDrawFunction(
   excalidrawAPI: ExcalidrawAPI,
-  animationId: string,
-  posX: number,
-  posY: number,
-  animWidth: number,
-  animHeight: number,
-  initialHTML: string
-): AnimationOverlay | null {
-  const excalidrawContainer = document.querySelector(".excalidraw");
-  if (!excalidrawContainer) {
-    console.error("[createAnimationOverlay] Could not find Excalidraw container");
-    return null;
+  params: ToolParams,
+  onAnimatedMathGraph?: OnAnimatedMathGraph
+): Promise<void> {
+  const { expression, position = "center", xMin = -Math.PI, xMax = Math.PI } = params;
+
+  if (!expression) {
+    console.error("[handleDrawFunction] No expression provided");
+    return;
   }
 
-  // Create container div for the iframe
-  const container = document.createElement("div");
-  container.id = `animation-${animationId}`;
-  container.style.cssText = `
-    position: absolute;
-    pointer-events: auto;
-    z-index: 10;
-    border-radius: 12px;
-    overflow: hidden;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-    border: 2px solid #333;
-  `;
-
-  // Create iframe
-  const iframe = document.createElement("iframe");
-  iframe.style.cssText = `
-    width: ${animWidth}px;
-    height: ${animHeight}px;
-    border: none;
-    display: block;
-  `;
-
-  container.appendChild(iframe);
-  excalidrawContainer.appendChild(container);
-
-  // Write initial content to iframe
-  const doc = iframe.contentDocument || iframe.contentWindow?.document;
-  if (doc) {
-    doc.open();
-    doc.write(initialHTML);
-    doc.close();
-  }
-
-  // Store for tracking
-  const overlay: AnimationOverlay = {
-    id: animationId,
-    iframe,
-    container,
-    x: posX,
-    y: posY,
-    width: animWidth,
-    height: animHeight,
-  };
-  animationOverlays.set(animationId, overlay);
-
-  // Function to update position based on current scroll/zoom
-  const updatePosition = () => {
-    const appState = excalidrawAPI.getAppState();
-    const { scrollX, scrollY, zoom } = appState;
-    const zoomValue = zoom?.value || 1;
-
-    // Convert scene coordinates to screen coordinates
-    const screenX = (posX + scrollX) * zoomValue;
-    const screenY = (posY + scrollY) * zoomValue;
-    const screenWidth = animWidth * zoomValue;
-    const screenHeight = animHeight * zoomValue;
-
-    container.style.left = `${screenX}px`;
-    container.style.top = `${screenY}px`;
-    container.style.width = `${screenWidth}px`;
-    container.style.height = `${screenHeight}px`;
-    iframe.style.width = `${screenWidth}px`;
-    iframe.style.height = `${screenHeight}px`;
-    iframe.style.transform = `scale(${zoomValue})`;
-    iframe.style.transformOrigin = "top left";
-  };
-
-  // Initial position update
-  updatePosition();
-
-  // Use Excalidraw's native onScrollChange API for reliable position sync
-  // This is the proper way to track scroll/zoom changes (not DOM events)
-  const unsubscribe = excalidrawAPI.onScrollChange((scrollX: number, scrollY: number, zoom: { value: number }) => {
-    const zoomValue = zoom?.value || 1;
-
-    // Convert scene coordinates to screen coordinates
-    const screenX = (posX + scrollX) * zoomValue;
-    const screenY = (posY + scrollY) * zoomValue;
-    const screenWidth = animWidth * zoomValue;
-    const screenHeight = animHeight * zoomValue;
-
-    container.style.left = `${screenX}px`;
-    container.style.top = `${screenY}px`;
-    container.style.width = `${screenWidth}px`;
-    container.style.height = `${screenHeight}px`;
-    iframe.style.width = `${screenWidth}px`;
-    iframe.style.height = `${screenHeight}px`;
-    iframe.style.transform = `scale(${zoomValue})`;
-    iframe.style.transformOrigin = "top left";
-  });
-
-  // Store the unsubscribe function for cleanup
-  overlay.unsubscribe = unsubscribe;
-
-  return overlay;
-}
-
-/**
- * Update an existing animation overlay with new HTML content
- */
-function updateAnimationContent(overlay: AnimationOverlay, htmlContent: string): void {
-  const doc = overlay.iframe.contentDocument || overlay.iframe.contentWindow?.document;
-  if (doc) {
-    doc.open();
-    doc.write(htmlContent);
-    doc.close();
-  }
-}
-
-/**
- * Create a p5.js animation iframe overlaid on the Excalidraw canvas.
- * If code is not provided, shows a loading placeholder and fetches code async.
- * The iframe is positioned in scene coordinates and updates when the canvas scrolls/zooms.
- */
-function handleAnimate(
-  excalidrawAPI: ExcalidrawAPI,
-  params: ToolParams
-): void {
-  const { code, prompt, position = "center" } = params;
-
-  // Animation dimensions - responsive to viewport
-  const { width: animWidth, height: animHeight } = getResponsiveSize(600, 400, excalidrawAPI);
+  // Get viewport info to convert normalized coords
+  const appState = excalidrawAPI.getAppState();
+  const { scrollX, scrollY, zoom } = appState;
+  const zoomValue = zoom?.value || 1;
 
   // Calculate position based on position parameter
   const { x: posX, y: posY } = calculatePosition(
     excalidrawAPI,
     position as PositionType,
-    animWidth,
-    animHeight
+    MATH_GRAPH_WIDTH,
+    MATH_GRAPH_HEIGHT
   );
 
-  // Generate unique ID for this animation
-  const animationId = generateId();
+  // Calculate screen pixel coordinates (for SVG overlay)
+  const viewportLeft = -scrollX;
+  const viewportTop = -scrollY;
+  const screenX = (posX - viewportLeft) * zoomValue;
+  const screenY = (posY - viewportTop) * zoomValue;
+  const screenWidth = MATH_GRAPH_WIDTH * zoomValue;
+  const screenHeight = MATH_GRAPH_HEIGHT * zoomValue;
 
-  // Track for relative positioning immediately (so next elements position correctly)
-  setLastElementId(`animation:${animationId}`);
+  // If callback provided, use animated version
+  if (onAnimatedMathGraph) {
+    onAnimatedMathGraph({
+      expression,
+      screenX,
+      screenY,
+      screenWidth,
+      screenHeight,
+      sceneX: posX,
+      sceneY: posY,
+      sceneWidth: MATH_GRAPH_WIDTH,
+      sceneHeight: MATH_GRAPH_HEIGHT,
+      xMin,
+      xMax,
+    });
+    return;
+  }
 
+}
+
+/**
+ * Create image element from AnimatedMathGraphResult
+ * Called after the animation completes
+ */
+export function createMathGraphElements(
+  excalidrawAPI: ExcalidrawAPI,
+  result: AnimatedMathGraphResult,
+  sceneX: number,
+  sceneY: number,
+  sceneWidth: number,
+  sceneHeight: number
+): void {
+  const elements = excalidrawAPI.getSceneElements();
+  const fileId = generateId() as any; // FileId branded type
+  const elementId = generateId();
+
+  const imageElement = {
+    id: elementId,
+    type: "image" as const,
+    x: sceneX,
+    y: sceneY,
+    width: sceneWidth,
+    height: sceneHeight,
+    angle: 0,
+    strokeColor: "transparent",
+    backgroundColor: "transparent",
+    fillStyle: "solid" as const,
+    strokeWidth: 0,
+    strokeStyle: "solid" as const,
+    roughness: 0,
+    opacity: 100,
+    groupIds: [],
+    frameId: null,
+    index: "a0" as any,
+    roundness: null,
+    seed: Math.floor(Math.random() * 100000),
+    version: 1,
+    versionNonce: Math.floor(Math.random() * 100000),
+    isDeleted: false,
+    boundElements: null,
+    updated: Date.now(),
+    link: null,
+    locked: false,
+    fileId,
+    status: "saved" as const,
+    scale: [1, 1] as [number, number],
+  };
+
+  excalidrawAPI.updateScene({
+    elements: [...elements, imageElement],
+  });
+
+  // Add SVG file to Excalidraw
+  excalidrawAPI.addFiles([
+    {
+      id: fileId,
+      dataURL: result.svgDataUrl,
+      mimeType: "image/svg+xml",
+      created: Date.now(),
+      lastRetrieved: Date.now(),
+    },
+  ]);
+
+  setLastElementId(elementId);
+}
+
+// ============================================
+// ANIMATION HANDLER - NATIVE EXCALIDRAW IFRAME ELEMENT
+// ============================================
+
+/**
+ * Build p5.js animation HTML for srcdoc
+ */
+function buildAnimationHTML(code: string): string {
+  return `<!DOCTYPE html>
+<html>
+<head>
+<style>
+body { margin: 0; padding: 0; overflow: hidden; background: #1a1a2e; }
+canvas { display: block; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"><\/script>
+</head>
+<body>
+<script>
+window.onerror = function(msg) {
+  document.body.innerHTML = '<div style="color:red;padding:20px;">Error: ' + msg + '</div>';
+  return false;
+};
+${code}
+<\/script>
+</body>
+</html>`;
+}
+
+// Animation element dimensions - must match p5.js createCanvas(600, 400) in p5_subagent.py
+const ANIM_WIDTH = 600;
+const ANIM_HEIGHT = 400;
+
+/**
+ * Create an iframe element for animation
+ */
+function createIframeElement(
+  id: string,
+  x: number,
+  y: number,
+  html: string,
+  status: "pending" | "done"
+): any {
+  return {
+    id,
+    type: "iframe" as const,
+    x,
+    y,
+    width: ANIM_WIDTH,
+    height: ANIM_HEIGHT,
+    angle: 0,
+    strokeColor: "#1e1e1e",
+    backgroundColor: "#1a1a2e",
+    fillStyle: "solid" as const,
+    strokeWidth: 2,
+    strokeStyle: "solid" as const,
+    roughness: 0,
+    opacity: 100,
+    groupIds: [],
+    frameId: null,
+    index: "a0" as any,
+    roundness: { type: 3 },
+    seed: Math.floor(Math.random() * 100000),
+    version: 1,
+    versionNonce: Math.floor(Math.random() * 100000),
+    isDeleted: false,
+    boundElements: null,
+    updated: Date.now(),
+    link: null,
+    locked: false,
+    customData: {
+      generationData: {
+        status,
+        html,
+      },
+    },
+  };
+}
+
+/**
+ * Create animation as native Excalidraw iframe element
+ * Shows a text placeholder immediately, then replaces with iframe when code is ready
+ */
+async function handleAnimate(
+  excalidrawAPI: ExcalidrawAPI,
+  params: ToolParams
+): Promise<void> {
+  const { code, prompt, position = "center" } = params;
+
+  // Calculate position IMMEDIATELY before any async work
+  const { x: posX, y: posY } = calculatePosition(
+    excalidrawAPI,
+    position as PositionType,
+    ANIM_WIDTH,
+    ANIM_HEIGHT
+  );
+
+  const elementId = generateId();
+
+  // If code is provided directly, create the animation immediately
   if (code) {
-    // Code is already available - render immediately
-    const overlay = createAnimationOverlay(
-      excalidrawAPI,
-      animationId,
-      posX,
-      posY,
-      animWidth,
-      animHeight,
-      buildAnimationHTML(code)
-    );
-    if (overlay) {
-      console.log(`[handleAnimate] Created animation ${animationId} at (${posX}, ${posY})`);
-    }
-  } else if (prompt) {
-    // No code yet - show placeholder and fetch async
-    console.log(`[handleAnimate] No code provided, showing placeholder and fetching for prompt: ${prompt}`);
+    const html = buildAnimationHTML(code);
+    const iframeElement = createIframeElement(elementId, posX, posY, html, "done");
 
-    const overlay = createAnimationOverlay(
-      excalidrawAPI,
-      animationId,
-      posX,
-      posY,
-      animWidth,
-      animHeight,
-      LOADING_PLACEHOLDER_HTML
-    );
+    const elements = excalidrawAPI.getSceneElements();
+    excalidrawAPI.updateScene({
+      elements: [...elements, iframeElement],
+    });
 
-    if (overlay) {
-      // Fetch code async and update when ready
-      fetchP5Code(prompt).then((fetchedCode) => {
-        if (fetchedCode) {
-          console.log(`[handleAnimate] Got code for ${animationId}, updating content`);
-          updateAnimationContent(overlay, buildAnimationHTML(fetchedCode));
-        } else {
-          // Show error state
-          updateAnimationContent(overlay, `
-            <!DOCTYPE html>
-            <html>
-            <head>
-              <style>
-                body {
-                  margin: 0;
-                  padding: 20px;
-                  display: flex;
-                  justify-content: center;
-                  align-items: center;
-                  min-height: 100vh;
-                  background: #1a1a2e;
-                  color: #ff6b6b;
-                  font-family: system-ui, sans-serif;
-                  font-size: 14px;
-                  text-align: center;
-                }
-              </style>
-            </head>
-            <body>Failed to generate animation</body>
-            </html>
-          `);
-        }
+    setLastElementId(elementId);
+    return;
+  }
+
+  // If prompt is provided, show text placeholder then fetch code
+  if (prompt) {
+    const placeholderId = `placeholder-${elementId}`;
+
+    // Create a text placeholder element (native Excalidraw - moves with canvas)
+    const placeholderText = "⏳ Loading animation...";
+    const fontSize = 20;
+    const { width: textWidth, height: textHeight } = measureText(placeholderText, fontSize, 1);
+
+    // Center the text within where the animation will be
+    const textX = posX + (ANIM_WIDTH - textWidth) / 2;
+    const textY = posY + (ANIM_HEIGHT - textHeight) / 2;
+
+    const placeholderElement = {
+      id: placeholderId,
+      type: "text" as const,
+      x: textX,
+      y: textY,
+      width: textWidth,
+      height: textHeight,
+      angle: 0,
+      strokeColor: "#868e96",
+      backgroundColor: "transparent",
+      fillStyle: "solid" as const,
+      strokeWidth: 2,
+      strokeStyle: "solid" as const,
+      roughness: 1,
+      opacity: 100,
+      groupIds: [],
+      frameId: null,
+      index: "a0" as const,
+      roundness: null,
+      seed: Math.floor(Math.random() * 100000),
+      version: 1,
+      versionNonce: Math.floor(Math.random() * 100000),
+      isDeleted: false,
+      boundElements: null,
+      updated: Date.now(),
+      link: null,
+      locked: false,
+      text: placeholderText,
+      fontSize,
+      fontFamily: 1,
+      textAlign: "center" as const,
+      verticalAlign: "middle" as const,
+      containerId: null,
+      originalText: placeholderText,
+      autoResize: true,
+      lineHeight: 1.25,
+    };
+
+    // Add placeholder to scene
+    let elements = excalidrawAPI.getSceneElements();
+    excalidrawAPI.updateScene({
+      elements: [...elements, placeholderElement],
+    });
+
+    // Set lastElementId now so subsequent tools position relative to where this will be
+    setLastElementId(elementId);
+
+    try {
+      const response = await fetch("/api/p5", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+
+      if (!response.ok) {
+        // Update placeholder to show error
+        elements = excalidrawAPI.getSceneElements();
+        excalidrawAPI.updateScene({
+          elements: elements.map((el: any) =>
+            el.id === placeholderId
+              ? { ...el, text: "❌ Animation failed", originalText: "❌ Animation failed", strokeColor: "#e03131" }
+              : el
+          ),
+        });
+        return;
+      }
+
+      const data = await response.json();
+
+      if (data.error || !data.code) {
+        // Update placeholder to show error
+        elements = excalidrawAPI.getSceneElements();
+        excalidrawAPI.updateScene({
+          elements: elements.map((el: any) =>
+            el.id === placeholderId
+              ? { ...el, text: "❌ Animation failed", originalText: "❌ Animation failed", strokeColor: "#e03131" }
+              : el
+          ),
+        });
+        return;
+      }
+
+      // Remove placeholder and add the real animation element
+      const html = buildAnimationHTML(data.code);
+      const iframeElement = createIframeElement(elementId, posX, posY, html, "done");
+
+      elements = excalidrawAPI.getSceneElements();
+      excalidrawAPI.updateScene({
+        elements: [
+          ...elements.filter((el: any) => el.id !== placeholderId),
+          iframeElement,
+        ],
+      });
+
+    } catch {
+      // Update placeholder to show error
+      elements = excalidrawAPI.getSceneElements();
+      excalidrawAPI.updateScene({
+        elements: elements.map((el: any) =>
+          el.id === placeholderId
+            ? { ...el, text: "❌ Animation failed", originalText: "❌ Animation failed", strokeColor: "#e03131" }
+            : el
+        ),
       });
     }
-  } else {
-    console.error("[handleAnimate] No code or prompt provided");
+    return;
   }
 }
 
 /**
- * Clear all animation overlays
+ * Clear all animations - native elements are cleared with clear_board
  */
-function clearAnimationOverlays(): void {
-  animationOverlays.forEach((overlay) => {
-    // Unsubscribe from scroll/zoom events to prevent memory leaks
-    if (overlay.unsubscribe) {
-      overlay.unsubscribe();
-    }
-    overlay.container.remove();
-  });
-  animationOverlays.clear();
+function clearAnimations(): void {
+  animationElements.clear();
 }
 
 // ============================================
@@ -1847,12 +1796,13 @@ function handleToolCall(
   excalidrawAPI: any,
   toolName: string,
   params: ToolParams,
-  onAnimatedAnnotate?: OnAnimatedAnnotate
+  onAnimatedAnnotate?: OnAnimatedAnnotate,
+  onAnimatedMathGraph?: OnAnimatedMathGraph
 ): void {
   switch (toolName) {
     case "clear_board":
       handleClearBoard(excalidrawAPI);
-      clearAnimationOverlays();
+      clearAnimations();
       break;
     case "add_text":
       handleAddText(excalidrawAPI, params);
@@ -1870,11 +1820,11 @@ function handleToolCall(
     case "animate":
       handleAnimate(excalidrawAPI, params);
       break;
-    // Tools not implemented for Excalidraw yet
-    case "draw_table":
-    case "plot_function":
+    case "draw_function":
+      handleDrawFunction(excalidrawAPI, params, onAnimatedMathGraph);
       break;
-    // Lesson control tools (no canvas action needed)
+    case "draw_table":
+      break;
     case "next_concept":
     case "finish_lesson":
       break;
@@ -1888,9 +1838,10 @@ export function triggerToolCall(
   excalidrawAPI: any,
   toolName: string,
   params: ToolParams,
-  onAnimatedAnnotate?: OnAnimatedAnnotate
+  onAnimatedAnnotate?: OnAnimatedAnnotate,
+  onAnimatedMathGraph?: OnAnimatedMathGraph
 ): void {
-  handleToolCall(excalidrawAPI, toolName, params, onAnimatedAnnotate);
+  handleToolCall(excalidrawAPI, toolName, params, onAnimatedAnnotate, onAnimatedMathGraph);
 }
 
 // ============================================
@@ -1908,8 +1859,7 @@ function captureCanvas(): string | null {
     // Get data URL and strip the prefix to get pure base64
     const dataUrl = canvas.toDataURL("image/png");
     return dataUrl.replace(/^data:image\/png;base64,/, "");
-  } catch (e) {
-    console.error("[captureCanvas] Failed to capture canvas:", e);
+  } catch {
     return null;
   }
 }
@@ -1939,57 +1889,18 @@ export function ExcalidrawToolHandler({ excalidrawAPI, room }: ExcalidrawToolHan
           if (msg.tool && typeof msg.tool === "string") {
             // Special handling for draw_query - call /api/draw like R&D does
             if (msg.tool === "draw_query" && msg.params?.query) {
-              console.log("[ExcalidrawToolHandler] Received draw_query:", msg.params.query);
-
-              // Capture screenshot immediately
-              const screenshot = captureCanvas();
-
-              // DEBUG: Log screenshot info
-              if (screenshot) {
-                console.log("[ExcalidrawToolHandler] Screenshot captured:", screenshot.length, "bytes");
-                // Save screenshot for debugging - creates a downloadable link
-                const debugLink = document.createElement("a");
-                debugLink.href = `data:image/png;base64,${screenshot}`;
-                debugLink.download = `debug-screenshot-${Date.now()}.png`;
-                console.log("[ExcalidrawToolHandler] Debug: Click to download screenshot:", debugLink.href.slice(0, 100) + "...");
-                // Uncomment next line to auto-download: debugLink.click();
-              } else {
-                console.warn("[ExcalidrawToolHandler] Screenshot is NULL!");
-              }
-
               try {
                 const response = await fetch("/api/draw", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ query: msg.params.query, screenshot }),
+                  body: JSON.stringify({ query: msg.params.query }),
                 });
 
                 if (!response.ok) {
-                  const errorData = await response.json();
-                  console.error("[ExcalidrawToolHandler] API error:", errorData.error);
                   return;
                 }
 
                 const data = await response.json();
-                console.log("[ExcalidrawToolHandler] Got tool calls:", data.toolCalls?.length);
-
-                // DEBUG: Log full tool calls with coordinates
-                if (data.toolCalls && Array.isArray(data.toolCalls)) {
-                  for (const toolCall of data.toolCalls) {
-                    console.log("[ExcalidrawToolHandler] Tool call:", JSON.stringify(toolCall, null, 2));
-
-                    // Special debug for annotate - show coordinates
-                    if (toolCall.tool === "annotate") {
-                      console.log("[ExcalidrawToolHandler] ANNOTATE coordinates:", {
-                        x: toolCall.params.x,
-                        y: toolCall.params.y,
-                        width: toolCall.params.width,
-                        height: toolCall.params.height,
-                        target: toolCall.params.target,
-                      });
-                    }
-                  }
-                }
 
                 // Execute each tool call (same as test-draw page)
                 if (data.toolCalls && Array.isArray(data.toolCalls)) {
@@ -1999,8 +1910,8 @@ export function ExcalidrawToolHandler({ excalidrawAPI, room }: ExcalidrawToolHan
                     await new Promise(resolve => setTimeout(resolve, 100));
                   }
                 }
-              } catch (err) {
-                console.error("[ExcalidrawToolHandler] Failed to call /api/draw:", err);
+              } catch {
+                // Silent fail
               }
             } else {
               // Regular tool call
@@ -2020,7 +1931,6 @@ export function ExcalidrawToolHandler({ excalidrawAPI, room }: ExcalidrawToolHan
           const msg = JSON.parse(str);
 
           if (msg.type === "request_screenshot") {
-            console.log("[ExcalidrawToolHandler] Screenshot requested by agent");
             const screenshot = captureCanvas();
 
             // Send screenshot back to agent
@@ -2034,10 +1944,9 @@ export function ExcalidrawToolHandler({ excalidrawAPI, room }: ExcalidrawToolHan
               new TextEncoder().encode(response),
               { reliable: true, topic: "canvas_screenshot" }
             );
-            console.log("[ExcalidrawToolHandler] Screenshot sent to agent");
           }
-        } catch (e) {
-          console.error("[ExcalidrawToolHandler] Error handling control message:", e);
+        } catch {
+          // Silent fail
         }
         return;
       }

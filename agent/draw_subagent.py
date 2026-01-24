@@ -107,41 +107,41 @@ TOOLS = [
                     required=["type", "nodes"]
                 )
             ),
-            types.FunctionDeclaration(
-                name="annotate",
-                description="Draw an annotation shape on the canvas to highlight or circle something visible on screen. ONLY use when a screenshot is provided and you need to point to something specific.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "shape": types.Schema(
-                            type=types.Type.STRING,
-                            description="Shape to draw",
-                            enum=["circle", "rectangle", "arrow"]
-                        ),
-                        "x": types.Schema(
-                            type=types.Type.NUMBER,
-                            description="X coordinate (0-1 normalized, where 0=left edge, 1=right edge)"
-                        ),
-                        "y": types.Schema(
-                            type=types.Type.NUMBER,
-                            description="Y coordinate (0-1 normalized, where 0=top edge, 1=bottom edge)"
-                        ),
-                        "width": types.Schema(
-                            type=types.Type.NUMBER,
-                            description="Width of shape (0-1 normalized). For circle, this is diameter."
-                        ),
-                        "height": types.Schema(
-                            type=types.Type.NUMBER,
-                            description="Height of shape (0-1 normalized). For circle, use same as width."
-                        ),
-                        "target": types.Schema(
-                            type=types.Type.STRING,
-                            description="Description of what is being annotated (e.g., 'the aorta', 'the red car')"
-                        )
-                    },
-                    required=["shape", "x", "y", "width", "height", "target"]
-                )
-            ),
+            # types.FunctionDeclaration(
+            #     name="annotate",
+            #     description="Draw an annotation shape on the canvas to highlight or circle something visible on screen. ONLY use when a screenshot is provided and you need to point to something specific.",
+            #     parameters=types.Schema(
+            #         type=types.Type.OBJECT,
+            #         properties={
+            #             "shape": types.Schema(
+            #                 type=types.Type.STRING,
+            #                 description="Shape to draw",
+            #                 enum=["circle", "rectangle", "arrow"]
+            #             ),
+            #             "x": types.Schema(
+            #                 type=types.Type.NUMBER,
+            #                 description="X coordinate (0-1 normalized, where 0=left edge, 1=right edge)"
+            #             ),
+            #             "y": types.Schema(
+            #                 type=types.Type.NUMBER,
+            #                 description="Y coordinate (0-1 normalized, where 0=top edge, 1=bottom edge)"
+            #             ),
+            #             "width": types.Schema(
+            #                 type=types.Type.NUMBER,
+            #                 description="Width of shape (0-1 normalized). For circle, this is diameter."
+            #             ),
+            #             "height": types.Schema(
+            #                 type=types.Type.NUMBER,
+            #                 description="Height of shape (0-1 normalized). For circle, use same as width."
+            #             ),
+            #             "target": types.Schema(
+            #                 type=types.Type.STRING,
+            #                 description="Description of what is being annotated (e.g., 'the aorta', 'the red car')"
+            #             )
+            #         },
+            #         required=["shape", "x", "y", "width", "height", "target"]
+            #     )
+            # ),
             types.FunctionDeclaration(
                 name="animate",
                 description="Create a dynamic p5.js animation for physics simulations, particle systems, and scientific visualizations. Use when static images or diagrams cannot convey the concept - especially for reactions, energy, motion, waves, and processes that need to FEEL real.",
@@ -160,12 +160,52 @@ TOOLS = [
                     required=["prompt"]
                 )
             ),
+            types.FunctionDeclaration(
+                name="draw_function",
+                description="Draw an animated math function graph. Use for plotting mathematical functions like sin(x), x^2, cos(x), etc. The graph is drawn with a hand-drawn animation effect.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "expression": types.Schema(
+                            type=types.Type.STRING,
+                            description="Mathematical expression using x as variable. Examples: 'sin(x)', 'x^2', 'cos(x)', '2*x + 1', 'x^3 - x', 'sqrt(x)', 'abs(x)', 'tan(x)', '1/x'"
+                        ),
+                        "xMin": types.Schema(
+                            type=types.Type.NUMBER,
+                            description="Minimum x value for the graph (default: -π ≈ -3.14)"
+                        ),
+                        "xMax": types.Schema(
+                            type=types.Type.NUMBER,
+                            description="Maximum x value for the graph (default: π ≈ 3.14)"
+                        ),
+                        "position": types.Schema(
+                            type=types.Type.STRING,
+                            description="Position: 'center' (default), 'below-last', etc."
+                        )
+                    },
+                    required=["expression"]
+                )
+            ),
         ]
     )
 ]
 
 # System prompt for the sub-agent
 SYSTEM_PROMPT = """You are a visual rendering agent for educational content. Convert natural language requests into tool calls.
+
+# TOOL SPEEDS (IMPORTANT)
+- add_text: FAST - instant
+- draw_diagram: FAST - instant
+- draw_function: FAST - instant (animated math graphs)
+- show_image: MEDIUM - ~1-2 sec
+# - annotate: MEDIUM - ~1 sec (disabled)
+- animate: SLOW - ~3-5 sec (p5.js generation)
+
+# SPEED HINTS FROM TUTOR
+The tutor may include speed hints in the query:
+- "quick" / "fast" / "quickly" → Use FAST tools only (add_text, draw_diagram)
+- No hint or "visualize" → Use MEDIUM tools (show_image, draw_diagram)
+- "animate" / "show how" / "demonstrate" → Use animate (SLOW but worth it for core concepts)
 
 # RULES (IMPORTANT - READ FIRST)
 
@@ -198,6 +238,12 @@ SYSTEM_PROMPT = """You are a visual rendering agent for educational content. Con
 - Use `emoji` for visual flair on titles (🌱 nature, ⚡ energy, 💡 ideas, 🔬 science, 🧬 biology, ⚛️ physics, 🧪 chemistry)
 - Use `accent` bar (purple/green/blue/red/orange) for important concepts or definitions
 - Use `underline` to emphasize key terms within the text (1-2 words max)
+
+**draw_function** - Use for MATH FUNCTION GRAPHS:
+- Trigger: "graph", "plot", "function", "y = ...", "f(x) = ..."
+- Topics: sin(x), cos(x), x^2, x^3, linear functions, polynomials
+- Supported: sin, cos, tan, sqrt, abs, log, exp, ^(power), *, +, -, /
+- Set xMin/xMax for appropriate range (default is -π to π)
 
 # TEXT STYLING GUIDE
 
@@ -236,26 +282,36 @@ Key concepts: Underline the important terms
 [{"tool": "add_text", "params": {"content": "Pythagorean Theorem", "size": "large", "emoji": "📐", "accent": "purple", "position": "center"}},
  {"tool": "add_text", "params": {"content": "a² + b² = c²", "size": "large", "underline": ["a²", "b²", "c²"], "underline_color": "purple", "position": "below-last"}}]
 
-# ANNOTATION MODE
+"graph sin x" → math function
+[{"tool": "add_text", "params": {"content": "Sine Function", "size": "large", "emoji": "📈", "accent": "blue", "position": "center"}},
+ {"tool": "draw_function", "params": {"expression": "sin(x)", "position": "below-last"}}]
 
-When a screenshot is provided, use `annotate` to highlight things on screen:
-- x, y: center position (0-1 normalized, 0=left/top, 1=right/bottom)
-- width, height: size (0-1 normalized)
-- Look carefully at the image before estimating coordinates
-- Make shapes slightly larger than the target
+"plot y = x squared" → math function
+[{"tool": "add_text", "params": {"content": "Parabola", "size": "large", "emoji": "📐", "accent": "purple", "position": "center"}},
+ {"tool": "draw_function", "params": {"expression": "x^2", "xMin": -3, "xMax": 3, "position": "below-last"}}]
 
-Example: "circle the mitochondria" (with screenshot)
-{"tool": "annotate", "params": {"shape": "circle", "x": 0.65, "y": 0.4, "width": 0.15, "height": 0.15, "target": "mitochondria"}}
+"show me what cosine looks like" → math function
+[{"tool": "add_text", "params": {"content": "Cosine Wave", "size": "large", "emoji": "〰️", "accent": "blue", "position": "center"}},
+ {"tool": "draw_function", "params": {"expression": "cos(x)", "xMin": -6.28, "xMax": 6.28, "position": "below-last"}}]
+
+# ANNOTATION MODE (disabled)
+# When a screenshot is provided, use `annotate` to highlight things on screen:
+# - x, y: center position (0-1 normalized, 0=left/top, 1=right/bottom)
+# - width, height: size (0-1 normalized)
+# - Look carefully at the image before estimating coordinates
+# - Make shapes slightly larger than the target
+#
+# Example: "circle the mitochondria" (with screenshot)
+# {"tool": "annotate", "params": {"shape": "circle", "x": 0.65, "y": 0.4, "width": 0.15, "height": 0.15, "target": "mitochondria"}}
 """
 
 
-def call_subagent(query: str, screenshot_base64: str | None = None) -> list[dict]:
+def call_subagent(query: str) -> list[dict]:
     """
     Call the Gemini sub-agent with a query and return the tool calls it makes.
 
     Args:
         query: Natural language query (e.g., "draw a red car on a hill")
-        screenshot_base64: Optional base64-encoded screenshot for annotation mode
 
     Returns:
         List of tool calls in format: [{"tool": "show_image", "params": {"query": "...", "position": "..."}}]
@@ -266,21 +322,9 @@ def call_subagent(query: str, screenshot_base64: str | None = None) -> list[dict
 
     client = genai.Client(api_key=api_key)
 
-    # Use Gemini 3 Flash for fast, capable tool use
     model = "gemini-3-flash-preview"
 
-    # Build the message parts
-    parts = []
-
-    # Add screenshot if provided
-    if screenshot_base64:
-        parts.append(types.Part.from_bytes(
-            data=base64.b64decode(screenshot_base64),
-            mime_type="image/png"
-        ))
-        parts.append(types.Part.from_text(text=f"Screenshot of current canvas is above. User request: {query}"))
-    else:
-        parts.append(types.Part.from_text(text=query))
+    parts = [types.Part.from_text(text=query)]
 
     contents = [
         types.Content(
@@ -289,9 +333,7 @@ def call_subagent(query: str, screenshot_base64: str | None = None) -> list[dict
         )
     ]
 
-    # Use MEDIUM thinking when screenshot is provided (for coordinate accuracy)
-    # Use MINIMAL thinking for regular draw calls (faster)
-    thinking_level = types.ThinkingLevel.MEDIUM if screenshot_base64 else types.ThinkingLevel.MINIMAL
+    thinking_level = types.ThinkingLevel.MINIMAL
 
     config = types.GenerateContentConfig(
         system_instruction=SYSTEM_PROMPT,
@@ -329,33 +371,16 @@ if __name__ == "__main__":
     import sys
 
     if len(sys.argv) < 2:
-        print("Usage: python draw_subagent.py <query> [--image <path>]")
+        print("Usage: python draw_subagent.py <query>")
         print('Example: python draw_subagent.py "draw a red car on a hill"')
-        print('Example: python draw_subagent.py "circle the mitochondria" --image screenshot.png')
         sys.exit(1)
 
-    # Parse args
-    args = sys.argv[1:]
-    screenshot_base64 = None
-
-    if "--image" in args:
-        img_idx = args.index("--image")
-        if img_idx + 1 < len(args):
-            image_path = args[img_idx + 1]
-            with open(image_path, "rb") as f:
-                screenshot_base64 = base64.b64encode(f.read()).decode("utf-8")
-            print(f"Loaded image: {image_path}")
-            args = args[:img_idx]  # Remove --image and path from args
-        else:
-            print("Error: --image requires a path")
-            sys.exit(1)
-
-    query = " ".join(args)
+    query = " ".join(sys.argv[1:])
     print(f"Query: {query}")
     print("-" * 50)
 
     try:
-        tool_calls = call_subagent(query, screenshot_base64)
+        tool_calls = call_subagent(query)
         print("Tool calls:")
         print(json.dumps(tool_calls, indent=2))
     except Exception as e:

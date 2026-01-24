@@ -16,6 +16,7 @@
     "animejs": "^4.3.3",
     "dagre": "^0.8.5",
     "eventemitter3": "^5.0.4",
+    "expr-eval": "^2.0.2",
     "framer-motion": "^11.15.0",
     "katex": "^0.16.27",
     "livekit-client": "^2.1.5",

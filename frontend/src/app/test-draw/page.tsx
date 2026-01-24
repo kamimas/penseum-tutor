@@ -2,8 +2,9 @@
 import "@excalidraw/excalidraw/index.css";
 import dynamic from "next/dynamic";
 import { useState, useCallback } from "react";
-import { triggerToolCall, AnimatedAnnotateRequest } from "../../components/ExcalidrawToolHandler";
-import { AnimatedAnnotation, AnimatedAnnotationResult, AnimatedText } from "../../components/AnimatedAnnotation";
+import { triggerToolCall, AnimatedAnnotateRequest, AnimatedMathGraphRequest, createMathGraphElements } from "../../components/ExcalidrawToolHandler";
+import { AnimatedAnnotation, AnimatedAnnotationResult } from "../../components/AnimatedAnnotation";
+import { AnimatedMathGraph, AnimatedMathGraphResult } from "../../components/AnimatedMathGraph";
 
 // Dynamic import - Excalidraw doesn't support SSR
 const Excalidraw = dynamic(
@@ -17,8 +18,6 @@ export default function TestDrawPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [lastResult, setLastResult] = useState<any>(null);
-  // State for animated text overlay
-  const [animatedText, setAnimatedText] = useState<{ text: string; x: number; y: number } | null>(null);
   // State for animated annotation overlay
   const [animatedAnnotation, setAnimatedAnnotation] = useState<{
     shape: "circle" | "rectangle";
@@ -34,6 +33,21 @@ export default function TestDrawPage() {
     sceneHeight: number;
   } | null>(null);
 
+  // State for animated math graph overlay
+  const [animatedMathGraph, setAnimatedMathGraph] = useState<{
+    expression: string;
+    screenX: number;
+    screenY: number;
+    screenWidth: number;
+    screenHeight: number;
+    sceneX: number;
+    sceneY: number;
+    sceneWidth: number;
+    sceneHeight: number;
+    xMin?: number;
+    xMax?: number;
+  } | null>(null);
+
   // Callback for animated annotations - triggered by triggerToolCall
   const handleAnimatedAnnotate = useCallback((request: AnimatedAnnotateRequest) => {
     setAnimatedAnnotation({
@@ -46,6 +60,23 @@ export default function TestDrawPage() {
       sceneY: request.sceneY,
       sceneWidth: request.sceneWidth,
       sceneHeight: request.sceneHeight,
+    });
+  }, []);
+
+  // Callback for animated math graphs - triggered by triggerToolCall
+  const handleAnimatedMathGraph = useCallback((request: AnimatedMathGraphRequest) => {
+    setAnimatedMathGraph({
+      expression: request.expression,
+      screenX: request.screenX,
+      screenY: request.screenY,
+      screenWidth: request.screenWidth,
+      screenHeight: request.screenHeight,
+      sceneX: request.sceneX,
+      sceneY: request.sceneY,
+      sceneWidth: request.sceneWidth,
+      sceneHeight: request.sceneHeight,
+      xMin: request.xMin,
+      xMax: request.xMax,
     });
   }, []);
 
@@ -100,6 +131,23 @@ export default function TestDrawPage() {
     setAnimatedAnnotation(null);
   }, [excalidrawAPI, animatedAnnotation]);
 
+  // Create freedraw elements from math graph animation result
+  const handleMathGraphComplete = useCallback((result: AnimatedMathGraphResult) => {
+    if (!excalidrawAPI || !animatedMathGraph) return;
+
+    createMathGraphElements(
+      excalidrawAPI,
+      result,
+      animatedMathGraph.sceneX,
+      animatedMathGraph.sceneY,
+      animatedMathGraph.sceneWidth,
+      animatedMathGraph.sceneHeight
+    );
+
+    // Clear the animated overlay
+    setAnimatedMathGraph(null);
+  }, [excalidrawAPI, animatedMathGraph]);
+
   // Capture canvas to base64
   const captureCanvas = (): string | null => {
     try {
@@ -145,7 +193,7 @@ export default function TestDrawPage() {
       // Execute each tool call
       if (data.toolCalls && Array.isArray(data.toolCalls)) {
         for (const toolCall of data.toolCalls) {
-          triggerToolCall(excalidrawAPI, toolCall.tool, toolCall.params, handleAnimatedAnnotate);
+          triggerToolCall(excalidrawAPI, toolCall.tool, toolCall.params, handleAnimatedAnnotate, handleAnimatedMathGraph);
           // Small delay between tool calls
           await new Promise(resolve => setTimeout(resolve, 100));
         }
@@ -160,16 +208,6 @@ export default function TestDrawPage() {
 
   return (
     <div style={{ width: "100vw", height: "100vh", position: "relative" }}>
-      {/* Animated Text Overlay */}
-      {animatedText && (
-        <AnimatedText
-          text={animatedText.text}
-          x={animatedText.x}
-          y={animatedText.y}
-          fontSize={32}
-        />
-      )}
-
       {/* Animated Annotation Overlay */}
       {animatedAnnotation && (
         <AnimatedAnnotation
@@ -179,6 +217,20 @@ export default function TestDrawPage() {
           width={animatedAnnotation.screenWidth}
           height={animatedAnnotation.screenHeight}
           onComplete={createFreedrawElement}
+        />
+      )}
+
+      {/* Animated Math Graph Overlay */}
+      {animatedMathGraph && (
+        <AnimatedMathGraph
+          expression={animatedMathGraph.expression}
+          x={animatedMathGraph.screenX}
+          y={animatedMathGraph.screenY}
+          width={animatedMathGraph.screenWidth}
+          height={animatedMathGraph.screenHeight}
+          xMin={animatedMathGraph.xMin}
+          xMax={animatedMathGraph.xMax}
+          onComplete={handleMathGraphComplete}
         />
       )}
 
@@ -358,26 +410,120 @@ export default function TestDrawPage() {
 
           <button
             onClick={() => {
-              // Test animated text
-              setAnimatedText({
-                text: "Hello World!",
-                x: 100,
-                y: 200,
+              if (!excalidrawAPI) return;
+              // Simple bouncing ball animation - hardcoded p5.js code
+              const bouncingBallCode = `
+let x, y, vx, vy;
+function setup() {
+  createCanvas(400, 300);
+  x = width / 2;
+  y = height / 2;
+  vx = 3;
+  vy = 2;
+}
+function draw() {
+  background(26, 26, 46);
+  x += vx;
+  y += vy;
+  if (x > width - 20 || x < 20) vx *= -1;
+  if (y > height - 20 || y < 20) vy *= -1;
+  fill(157, 124, 216);
+  noStroke();
+  ellipse(x, y, 40, 40);
+}
+              `;
+              triggerToolCall(excalidrawAPI, "animate", {
+                code: bouncingBallCode,
+                position: "center"
               });
             }}
             style={{
               padding: "10px 20px",
               borderRadius: 8,
-              border: "1px solid #22c55e",
-              background: "white",
-              color: "#22c55e",
+              border: "1px solid #9D7CD8",
+              background: "#9D7CD8",
+              color: "white",
               fontSize: 14,
               fontWeight: 500,
               cursor: "pointer",
               transition: "all 0.2s ease",
             }}
           >
-            Test Text
+            Test Animation
+          </button>
+
+          <button
+            onClick={() => {
+              if (!excalidrawAPI) return;
+              // Test animation with prompt - shows text placeholder on canvas
+              triggerToolCall(excalidrawAPI, "animate", {
+                prompt: "bouncing ball with gravity - ball falls and bounces with decreasing height",
+                position: "center"
+              });
+            }}
+            style={{
+              padding: "10px 20px",
+              borderRadius: 8,
+              border: "1px solid #7EC699",
+              background: "#7EC699",
+              color: "white",
+              fontSize: 14,
+              fontWeight: 500,
+              cursor: "pointer",
+              transition: "all 0.2s ease",
+            }}
+          >
+            Test Prompt Anim
+          </button>
+
+          <button
+            onClick={() => {
+              if (!excalidrawAPI) return;
+              // Test math graph with sin(x)
+              triggerToolCall(excalidrawAPI, "draw_function", {
+                expression: "sin(x)",
+                position: "center"
+              }, handleAnimatedAnnotate, handleAnimatedMathGraph);
+            }}
+            style={{
+              padding: "10px 20px",
+              borderRadius: 8,
+              border: "1px solid #1971c2",
+              background: "#1971c2",
+              color: "white",
+              fontSize: 14,
+              fontWeight: 500,
+              cursor: "pointer",
+              transition: "all 0.2s ease",
+            }}
+          >
+            Test sin(x)
+          </button>
+
+          <button
+            onClick={() => {
+              if (!excalidrawAPI) return;
+              // Test math graph with x^2
+              triggerToolCall(excalidrawAPI, "draw_function", {
+                expression: "x^2",
+                xMin: -3,
+                xMax: 3,
+                position: "center"
+              }, handleAnimatedAnnotate, handleAnimatedMathGraph);
+            }}
+            style={{
+              padding: "10px 20px",
+              borderRadius: 8,
+              border: "1px solid #e03131",
+              background: "white",
+              color: "#e03131",
+              fontSize: 14,
+              fontWeight: 500,
+              cursor: "pointer",
+              transition: "all 0.2s ease",
+            }}
+          >
+            Test x²
           </button>
 
           {lastResult && (

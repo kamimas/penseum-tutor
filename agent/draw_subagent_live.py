@@ -143,6 +143,32 @@ TOOLS = [
                     required=["prompt"]
                 )
             ),
+            types.FunctionDeclaration(
+                name="draw_function",
+                description="Draw an animated math function graph. Use for plotting mathematical functions like sin(x), x^2, cos(x), etc. The graph is drawn with a hand-drawn animation effect.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "expression": types.Schema(
+                            type=types.Type.STRING,
+                            description="Mathematical expression using x as variable. Examples: 'sin(x)', 'x^2', 'cos(x)', '2*x + 1', 'x^3 - x', 'sqrt(x)', 'abs(x)', 'tan(x)', '1/x'"
+                        ),
+                        "xMin": types.Schema(
+                            type=types.Type.NUMBER,
+                            description="Minimum x value for the graph (default: -π ≈ -3.14)"
+                        ),
+                        "xMax": types.Schema(
+                            type=types.Type.NUMBER,
+                            description="Maximum x value for the graph (default: π ≈ 3.14)"
+                        ),
+                        "position": types.Schema(
+                            type=types.Type.STRING,
+                            description="Position: 'center' (default), 'below-last', etc."
+                        )
+                    },
+                    required=["expression"]
+                )
+            ),
         ]
     )
 ]
@@ -153,6 +179,7 @@ SYSTEM_PROMPT = """You are a visual rendering agent. Convert natural language re
 # TOOL SPEEDS (IMPORTANT)
 - add_text: FAST - instant
 - draw_diagram: FAST - instant
+- draw_function: FAST - instant (animated math graphs)
 - show_image: MEDIUM - ~1-2 sec
 - annotate: MEDIUM - ~1 sec
 - animate: SLOW - ~3-5 sec (p5.js generation)
@@ -191,6 +218,12 @@ The tutor may include speed hints in the query:
 - Chemistry: reactions, molecular motion
 - NOT for: step-by-step processes (use draw_diagram instead)
 
+**draw_function** (FAST) - Math function graphs
+- Trigger: "graph", "plot", "function", "y = ...", "f(x) = ..."
+- Topics: sin(x), cos(x), x^2, x^3, linear functions, polynomials
+- Supported: sin, cos, tan, sqrt, abs, log, exp, ^(power), *, +, -, /
+- Set xMin/xMax for appropriate range (default is -π to π)
+
 # RULES
 1. MAX 2 tool calls: add_text (title) + one visual
 2. POSITIONING: First → "center", second → "below-last"
@@ -221,6 +254,14 @@ The tutor may include speed hints in the query:
 "demonstrate gravity" → demonstrate = animate
 [{"tool": "add_text", "params": {"content": "Gravity", "size": "large", "position": "center"}},
  {"tool": "animate", "params": {"prompt": "ball falling with increasing speed, bouncing with decreasing height each time", "position": "below-last"}}]
+
+"graph sin x" → math function
+[{"tool": "add_text", "params": {"content": "Sine Function", "size": "large", "position": "center"}},
+ {"tool": "draw_function", "params": {"expression": "sin(x)", "position": "below-last"}}]
+
+"plot y = x squared" → math function
+[{"tool": "add_text", "params": {"content": "Parabola", "size": "large", "position": "center"}},
+ {"tool": "draw_function", "params": {"expression": "x^2", "xMin": -3, "xMax": 3, "position": "below-last"}}]
 
 # ANNOTATION (when screenshot provided)
 "circle the mitochondria" (with screenshot)

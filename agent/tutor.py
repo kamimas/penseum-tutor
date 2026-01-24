@@ -290,7 +290,7 @@ async def entrypoint(ctx: JobContext):
             voice="Charon",
             input_audio_transcription=types.AudioTranscriptionConfig(),
             tool_behavior=types.Behavior.NON_BLOCKING,  # Continue speaking while tools execute
-            tool_response_scheduling=types.FunctionResponseScheduling.SILENT,  # Don't trigger new generation on tool response
+            tool_response_scheduling=types.FunctionResponseScheduling.WHEN_IDLE,  # Respond to tool result when done speaking
         ),
         allow_interruptions=True,
     )

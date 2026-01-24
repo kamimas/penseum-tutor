@@ -5,9 +5,10 @@
 
 import "@excalidraw/excalidraw/index.css";
 import dynamic from "next/dynamic";
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, forwardRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { triggerToolCall } from "../../components/ExcalidrawToolHandler";
+import { triggerToolCall, AnimatedAnnotateRequest } from "../../components/ExcalidrawToolHandler";
+import { AnimatedAnnotation, AnimatedAnnotationResult } from "../../components/AnimatedAnnotation";
 import { TutorCursor } from "../../components/TutorCursor";
 import { LeftNavigation } from "../../components/LeftNavigation";
 
@@ -48,81 +49,41 @@ const Excalidraw = dynamic(
 // GEMINI CONFIGURATION (matches tutor.py)
 // =============================================================================
 
-const SYSTEM_INSTRUCTION = `You are PAI, a tutor created by Penseum. S
+const SYSTEM_INSTRUCTION = `You are PAI, a tutor by Penseum. Be concise and energetic.
 
-IMPORTANT: SHOW, DON'T TELL. Always use draw() instead of explaining verbally. Visuals first, brief speech after.
+# STARTUP
+Ask what they want to learn. When they answer, say "Great choice!" then call plan_lesson(topic).
 
-RULES:
-1. ONE draw() call per response - don't batch multiple draws
-2. Never lie to the student - correct mistakes honestly
-3. Keep speech brief between tool calls
-4. Include speed hints in draw() based on how long you'll talk:
-   - "quick" = you'll say 1-2 sentences (fast diagram/text)
-   - No hint = you'll say a few sentences (image or diagram)
-   - "show how" / "demonstrate" = core concept worth waiting for (animation)
+# LESSON FORMAT
+Each concept has:
+- SAY: What to speak (includes a question for the student)
+- VISUAL: What to draw
 
-TOOLS:
-- draw(query) - Describe what to show. Add speed hints: "quick X", "show how X works", "photo of X"
-- clear_board() - Clear when switching topics
+# LESSON FLOW (ONE TOOL PER TURN)
+1. Speak the SAY script
+2. Call draw() with the VISUAL
+3. STOP and wait for student response
+4. Only after student responds → call next_concept()
 
-VISION:
-You can see the student's screen. Reference what you see when relevant. When content is already on the board, prefer annotating it over adding new content.
+NEVER call next_concept() until the student has responded.
 
-GOOD EXAMPLES:
-
-Student: "Teach me about the heart"
-draw("the heart")
-"This is the heart with its four chambers."
-
-Student: "How does the heart pump blood?"
-draw("show how the heart beats")
-"Watch it contract - the left side pumps to your body, the right to your lungs."
-
-Student: "What are the steps of photosynthesis?"
-draw("quick steps of photosynthesis")
-"Sunlight, water, CO2 in - glucose and oxygen out."
-
-Student: "What does a platypus look like?"
-draw("photo of a platypus")
-"Notice the duck-like bill and beaver tail."
-
-Student: [Board shows a cell diagram] "Where's the mitochondria?"
-draw("circle the mitochondria")
-"Right here - it's the powerhouse of the cell."
-
-Student: "Explain gravity"
-draw("demonstrate gravity with a falling ball")
-"See how it speeds up as it falls? That's acceleration due to gravity."
-
-BAD EXAMPLES - Don't do this:
-
-Student: "Explain photosynthesis"
-"Photosynthesis is when plants convert sunlight into energy using chlorophyll..."
-[Wrong: Too much talking, no visuals]
-
-Student: "Teach me about the heart"
-draw("the heart")
-draw("circle the left ventricle")
-draw("blood flow animation")
-[Wrong: Multiple draws in one response - do ONE at a time]
-
-Student: "What is the heart?"
-draw("the heart")
-"The heart has four chambers. The right atrium receives deoxygenated blood..."
-[Wrong: Wall of text - keep it brief]
-
+# TOOLS
+- plan_lesson(topic) - Generate lesson
+- draw(query) - Draw on whiteboard
+- next_concept() - Get next concept (only after student responds)
+- finish_lesson() - End lesson
+- clear_board() - Clear whiteboard
 `;
 
 const DRAW_TOOL: FunctionDeclaration = {
   name: "draw",
-  description:
-    "Draw visuals on the whiteboard. USE THIS for any visual content: text, images, diagrams. Also use this to annotate/circle/highlight things on the whiteboard.",
+  description: "Draw on whiteboard: text, images, diagrams, annotations.",
   parameters: {
     type: Type.OBJECT,
     properties: {
       query: {
         type: Type.STRING,
-        description: 'Natural language description of what to show',
+        description: 'What to draw',
       },
     },
     required: ["query"],
@@ -132,7 +93,7 @@ const DRAW_TOOL: FunctionDeclaration = {
 
 const CLEAR_BOARD_TOOL: FunctionDeclaration = {
   name: "clear_board",
-  description: "Clear the whiteboard. USE THIS when switching to a new topic or when the board is cluttered.",
+  description: "Clear whiteboard. Use when switching topics or board is cluttered.",
   parameters: {
     type: Type.OBJECT,
     properties: {},
@@ -140,20 +101,41 @@ const CLEAR_BOARD_TOOL: FunctionDeclaration = {
   behavior: Behavior.NON_BLOCKING,
 };
 
-// =============================================================================
-// CANVAS CAPTURE (same as production ExcalidrawToolHandler)
-// =============================================================================
+const PLAN_LESSON_TOOL: FunctionDeclaration = {
+  name: "plan_lesson",
+  description: "Generate lesson plan when student picks a topic. Returns first concept's instructions.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      topic: {
+        type: Type.STRING,
+        description: 'Topic to teach',
+      },
+    },
+    required: ["topic"],
+  },
+  behavior: Behavior.BLOCKING,
+};
 
-function captureCanvas(): string | null {
-  try {
-    const canvas = document.querySelector(".excalidraw__canvas") as HTMLCanvasElement;
-    if (!canvas) return null;
-    const dataUrl = canvas.toDataURL("image/png");
-    return dataUrl.replace(/^data:image\/png;base64,/, "");
-  } catch (e) {
-    return null;
-  }
-}
+const NEXT_CONCEPT_TOOL: FunctionDeclaration = {
+  name: "next_concept",
+  description: "MUST call after each concept (draw + explanation). Returns next concept's instructions.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {},
+  },
+  behavior: Behavior.BLOCKING,
+};
+
+const FINISH_LESSON_TOOL: FunctionDeclaration = {
+  name: "finish_lesson",
+  description: "End lesson when all concepts are done.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {},
+  },
+  behavior: Behavior.BLOCKING,
+};
 
 // =============================================================================
 // MINIMAL TOOLBAR (same as production)
@@ -247,21 +229,18 @@ interface GeminiChatPillProps {
 }
 
 // Message bubble component with Framer Motion animations
-function MessageBubble({
-  message,
-  index,
-  total,
-}: {
+const MessageBubble = forwardRef<HTMLDivElement, {
   message: DisplayMessage;
   index: number;
   total: number;
-}) {
+}>(({ message, index, total }, ref) => {
   const position = total - index;
   const opacity = Math.max(0.3, 1 - (position - 1) * 0.25);
 
   if (message.isUser) {
     return (
       <motion.div
+        ref={ref}
         initial={{ opacity: 0, y: 20, scale: 0.95 }}
         animate={{ opacity, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: -10, scale: 0.95 }}
@@ -287,6 +266,7 @@ function MessageBubble({
 
   return (
     <motion.div
+      ref={ref}
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity, y: 0 }}
       exit={{ opacity: 0, y: -10 }}
@@ -301,7 +281,9 @@ function MessageBubble({
       {message.text}
     </motion.div>
   );
-}
+});
+
+MessageBubble.displayName = "MessageBubble";
 
 function GeminiChatPill({ connectionState, isMicEnabled, onToggleMic, onEndSession, aiState, isMobile, messageHistory }: GeminiChatPillProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -536,6 +518,24 @@ function GeminiCanvasStreamer({ excalidrawAPI, client, connectionState }: { exca
 }
 
 // =============================================================================
+// LOGGING HELPER
+// =============================================================================
+
+async function logToolCall(type: "CALL" | "RESULT", toolName: string, data: unknown) {
+  const message = `[${type}] ${toolName}: ${JSON.stringify(data)}`;
+  console.log(`[TOOL ${type}]`, toolName, data);
+  try {
+    await fetch("/api/log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+    });
+  } catch {
+    // Silent fail - logging shouldn't break the app
+  }
+}
+
+// =============================================================================
 // MAIN ROOM COMPONENT
 // =============================================================================
 
@@ -547,6 +547,19 @@ function GeminiRoom({ onReset }: { onReset: () => void }) {
   const [messageHistory, setMessageHistory] = useState<DisplayMessage[]>([]);
   const isMobile = useIsMobile();
 
+  // State for animated annotation overlay
+  const [animatedAnnotation, setAnimatedAnnotation] = useState<{
+    shape: "circle" | "rectangle";
+    screenX: number;
+    screenY: number;
+    screenWidth: number;
+    screenHeight: number;
+    sceneX: number;
+    sceneY: number;
+    sceneWidth: number;
+    sceneHeight: number;
+  } | null>(null);
+
   const clientRef = useRef<GeminiLiveClient | null>(null);
   const audioPlaybackRef = useRef<AudioPlayback | null>(null);
   const audioCaptureRef = useRef<AudioCapture | null>(null);
@@ -557,23 +570,96 @@ function GeminiRoom({ onReset }: { onReset: () => void }) {
   const currentAiMsgIdRef = useRef<string | null>(null);
   const turnCounterRef = useRef(0);
 
+  // Lesson state
+  const lessonRef = useRef<{
+    title: string;
+    subject: string;
+    concepts: { name: string; script: string; visual: string }[];
+  } | null>(null);
+  const conceptIndexRef = useRef(0);
+
+  // Guard to prevent double greeting (React StrictMode)
+  const greetingSentRef = useRef(false);
+
   // Keep ref in sync
   useEffect(() => {
     excalidrawAPIRef.current = excalidrawAPI;
   }, [excalidrawAPI]);
 
+  // Callback for animated annotations - triggered by triggerToolCall
+  const handleAnimatedAnnotate = useCallback((request: AnimatedAnnotateRequest) => {
+    setAnimatedAnnotation({
+      shape: request.shape,
+      screenX: request.screenX,
+      screenY: request.screenY,
+      screenWidth: request.screenWidth,
+      screenHeight: request.screenHeight,
+      sceneX: request.sceneX,
+      sceneY: request.sceneY,
+      sceneWidth: request.sceneWidth,
+      sceneHeight: request.sceneHeight,
+    });
+  }, []);
+
+  // Create freedraw element from animation result
+  const createFreedrawElement = useCallback((result: AnimatedAnnotationResult) => {
+    if (!excalidrawAPIRef.current || !animatedAnnotation) return;
+
+    const freedrawStrokeWidth = 0.5;
+    const freedrawElement = {
+      id: `freedraw-${Date.now()}`,
+      type: "freedraw" as const,
+      x: animatedAnnotation.sceneX,
+      y: animatedAnnotation.sceneY,
+      width: animatedAnnotation.sceneWidth,
+      height: animatedAnnotation.sceneHeight,
+      angle: 0,
+      strokeColor: result.strokeColor,
+      backgroundColor: "transparent",
+      fillStyle: "solid" as const,
+      strokeWidth: freedrawStrokeWidth,
+      strokeStyle: "solid" as const,
+      roughness: 1,
+      opacity: 100,
+      groupIds: [],
+      frameId: null,
+      index: "a0",
+      roundness: null,
+      seed: Math.floor(Math.random() * 100000),
+      version: 1,
+      versionNonce: Math.floor(Math.random() * 100000),
+      isDeleted: false,
+      boundElements: null,
+      updated: Date.now(),
+      link: null,
+      locked: false,
+      points: result.points,
+      pressures: result.pressures,
+      simulatePressure: false,
+      lastCommittedPoint: null,
+    };
+
+    const elements = excalidrawAPIRef.current.getSceneElements();
+    excalidrawAPIRef.current.updateScene({
+      elements: [...elements, freedrawElement],
+    });
+
+    setAnimatedAnnotation(null);
+  }, [animatedAnnotation]);
+
   // Handle draw tool call
   const handleDrawToolCall = useCallback(async (query: string, toolCallId: string) => {
+    logToolCall("CALL", "draw", { query, toolCallId });
     // Send tool response IMMEDIATELY to prevent Gemini from retrying
-    clientRef.current?.sendToolResponse(toolCallId, "draw", "Done.", FunctionResponseScheduling.SILENT);
-
-    const screenshot = captureCanvas();
+    const result = "Done.";
+    logToolCall("RESULT", "draw", { result });
+    clientRef.current?.sendToolResponse(toolCallId, "draw", result, FunctionResponseScheduling.SILENT);
 
     try {
       const response = await fetch("/api/draw", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, screenshot }),
+        body: JSON.stringify({ query }),
       });
 
       if (!response.ok) return;
@@ -583,21 +669,126 @@ function GeminiRoom({ onReset }: { onReset: () => void }) {
       // Execute each tool call on Excalidraw
       if (data.toolCalls && Array.isArray(data.toolCalls) && excalidrawAPIRef.current) {
         for (const toolCall of data.toolCalls) {
-          triggerToolCall(excalidrawAPIRef.current, toolCall.tool, toolCall.params);
+          triggerToolCall(excalidrawAPIRef.current, toolCall.tool, toolCall.params, handleAnimatedAnnotate);
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
       }
     } catch (err) {
       // Silent fail
     }
-  }, []);
+  }, [handleAnimatedAnnotate]);
 
   // Handle clear_board tool call
   const handleClearBoardToolCall = useCallback((toolCallId: string) => {
+    logToolCall("CALL", "clear_board", { toolCallId });
     if (excalidrawAPIRef.current) {
       excalidrawAPIRef.current.resetScene();
     }
-    clientRef.current?.sendToolResponse(toolCallId, "clear_board", "Done.", FunctionResponseScheduling.SILENT);
+    const result = "Done.";
+    logToolCall("RESULT", "clear_board", { result });
+    clientRef.current?.sendToolResponse(toolCallId, "clear_board", result, FunctionResponseScheduling.SILENT);
+  }, []);
+
+  // Handle plan_lesson tool call
+  const handlePlanLessonToolCall = useCallback(async (topic: string, toolCallId: string) => {
+    logToolCall("CALL", "plan_lesson", { topic, toolCallId });
+    try {
+      const response = await fetch("/api/lesson", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ topic }),
+      });
+
+      if (!response.ok) {
+        const result = "Failed to generate lesson. Please try again.";
+        logToolCall("RESULT", "plan_lesson", { result });
+        clientRef.current?.sendToolResponse(toolCallId, "plan_lesson", result);
+        return;
+      }
+
+      const data = await response.json();
+      const lesson = data.lesson;
+
+      // Store lesson and reset index
+      lessonRef.current = lesson;
+      conceptIndexRef.current = 0;
+
+      // Return first concept's instructions
+      const firstConcept = lesson.concepts[0];
+      const totalConcepts = lesson.concepts.length;
+      // Format: script (what to say) + visual (what to draw) - kept separate so Gemini doesn't auto-call draw()
+      const result = `Lesson "${lesson.title}" created with ${totalConcepts} concepts.
+
+First concept (1/${totalConcepts}) - "${firstConcept.name}":
+SAY: ${firstConcept.script}
+VISUAL: ${firstConcept.visual}
+
+Remember: Say the script, call draw() with the visual, explain what you showed, ask the student a question, wait for their response, THEN call next_concept().`;
+      logToolCall("RESULT", "plan_lesson", { result, lesson });
+      clientRef.current?.sendToolResponse(
+        toolCallId,
+        "plan_lesson",
+        result
+      );
+    } catch (err) {
+      const result = "Failed to generate lesson. Please try again.";
+      logToolCall("RESULT", "plan_lesson", { result, error: String(err) });
+      clientRef.current?.sendToolResponse(toolCallId, "plan_lesson", result);
+    }
+  }, []);
+
+  // Handle next_concept tool call
+  const handleNextConceptToolCall = useCallback((toolCallId: string) => {
+    logToolCall("CALL", "next_concept", { toolCallId, currentIndex: conceptIndexRef.current });
+    if (!lessonRef.current) {
+      const result = "No lesson in progress. Use plan_lesson first.";
+      logToolCall("RESULT", "next_concept", { result });
+      clientRef.current?.sendToolResponse(toolCallId, "next_concept", result);
+      return;
+    }
+
+    conceptIndexRef.current += 1;
+    const concepts = lessonRef.current.concepts;
+
+    if (conceptIndexRef.current >= concepts.length) {
+      const result = "All concepts complete. Call finish_lesson() to wrap up.";
+      logToolCall("RESULT", "next_concept", { result, conceptIndex: conceptIndexRef.current });
+      clientRef.current?.sendToolResponse(
+        toolCallId,
+        "next_concept",
+        result
+      );
+      return;
+    }
+
+    const nextConcept = concepts[conceptIndexRef.current];
+    const totalConcepts = concepts.length;
+    // Format: script (what to say) + visual (what to draw) - kept separate so Gemini doesn't auto-call draw()
+    const result = `Concept ${conceptIndexRef.current + 1}/${totalConcepts} - "${nextConcept.name}":
+SAY: ${nextConcept.script}
+VISUAL: ${nextConcept.visual}
+
+Remember: Say the script, call draw() with the visual, explain what you showed, ask the student a question, wait for their response, THEN call next_concept().`;
+    logToolCall("RESULT", "next_concept", { result, conceptIndex: conceptIndexRef.current });
+    clientRef.current?.sendToolResponse(
+      toolCallId,
+      "next_concept",
+      result
+    );
+  }, []);
+
+  // Handle finish_lesson tool call
+  const handleFinishLessonToolCall = useCallback((toolCallId: string) => {
+    logToolCall("CALL", "finish_lesson", { toolCallId });
+    lessonRef.current = null;
+    conceptIndexRef.current = 0;
+    const result = "Lesson complete! Ask the student if they have any questions, or what they'd like to learn next.";
+    logToolCall("RESULT", "finish_lesson", { result });
+    clientRef.current?.sendToolResponse(
+      toolCallId,
+      "finish_lesson",
+      result
+    );
   }, []);
 
   // Connect to Gemini on mount
@@ -613,7 +804,7 @@ function GeminiRoom({ onReset }: { onReset: () => void }) {
       // Create Gemini client
       const client = new GeminiLiveClient({
         apiKey,
-        tools: [DRAW_TOOL, CLEAR_BOARD_TOOL],
+        tools: [DRAW_TOOL, CLEAR_BOARD_TOOL, PLAN_LESSON_TOOL, NEXT_CONCEPT_TOOL, FINISH_LESSON_TOOL],
         systemInstruction: SYSTEM_INSTRUCTION,
       });
       clientRef.current = client;
@@ -623,6 +814,11 @@ function GeminiRoom({ onReset }: { onReset: () => void }) {
 
       client.on("setupComplete", () => {
         setAiState("listening");
+        // Guard against double-fire from React StrictMode
+        if (greetingSentRef.current) return;
+        greetingSentRef.current = true;
+        // Trigger greeting - AI will ask what the student wants to learn
+        client.sendText("Session started. Greet the student and ask what they want to learn.");
       });
 
       client.on("audio", (buffer) => {
@@ -637,6 +833,12 @@ function GeminiRoom({ onReset }: { onReset: () => void }) {
             handleDrawToolCall(tc.args.query as string, tc.id);
           } else if (tc.name === "clear_board") {
             handleClearBoardToolCall(tc.id);
+          } else if (tc.name === "plan_lesson" && tc.args.topic) {
+            handlePlanLessonToolCall(tc.args.topic as string, tc.id);
+          } else if (tc.name === "next_concept") {
+            handleNextConceptToolCall(tc.id);
+          } else if (tc.name === "finish_lesson") {
+            handleFinishLessonToolCall(tc.id);
           }
         }
       });
@@ -700,7 +902,7 @@ function GeminiRoom({ onReset }: { onReset: () => void }) {
       audioPlaybackRef.current?.stop();
       audioCaptureRef.current?.stop();
     };
-  }, [handleDrawToolCall, handleClearBoardToolCall]);
+  }, [handleDrawToolCall, handleClearBoardToolCall, handlePlanLessonToolCall, handleNextConceptToolCall, handleFinishLessonToolCall]);
 
   // Toggle microphone
   const handleToggleMic = useCallback(async () => {
@@ -750,6 +952,18 @@ function GeminiRoom({ onReset }: { onReset: () => void }) {
           display: none !important;
         }
       `}</style>
+
+      {/* Animated Annotation Overlay */}
+      {animatedAnnotation && (
+        <AnimatedAnnotation
+          shape={animatedAnnotation.shape}
+          x={animatedAnnotation.screenX}
+          y={animatedAnnotation.screenY}
+          width={animatedAnnotation.screenWidth}
+          height={animatedAnnotation.screenHeight}
+          onComplete={createFreedrawElement}
+        />
+      )}
 
       {/* Mobile logo */}
       {isMobile && (

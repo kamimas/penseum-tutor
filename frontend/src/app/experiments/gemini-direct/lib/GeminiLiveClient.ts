@@ -157,6 +157,7 @@ export class GeminiLiveClient extends EventEmitter<GeminiLiveClientEvents> {
   }
 
   private handleMessage(message: LiveServerMessage) {
+
     // Setup complete
     if (message.setupComplete) {
       this.log("server", "Setup complete");
@@ -256,7 +257,8 @@ export class GeminiLiveClient extends EventEmitter<GeminiLiveClientEvents> {
   }
 
   /**
-   * Send a text message to Gemini
+   * Send a text message to Gemini using client content
+   * This triggers the model to generate a response (including audio)
    */
   sendText(text: string) {
     if (!this.session || this.state !== "connected") {
@@ -265,8 +267,9 @@ export class GeminiLiveClient extends EventEmitter<GeminiLiveClientEvents> {
     }
 
     this.log("client", `Sending text: ${text}`);
+    // Use sendClientContent with proper Content format and turnComplete to trigger response
     this.session.sendClientContent({
-      turns: [{ text }],
+      turns: [{ role: "user", parts: [{ text }] }],
       turnComplete: true,
     });
   }
