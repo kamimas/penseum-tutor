@@ -14,6 +14,10 @@ import time
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+# Load .env file
+from dotenv import load_dotenv
+load_dotenv()
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -24,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 # Import subagents (loaded once at startup)
 from draw_subagent import call_subagent as call_draw_subagent
+from act_subagent import interpret_intent as call_act_subagent
 from p5js.p5_subagent import generate_p5_animation
 
 app = FastAPI(title="Draw Subagent Server")
@@ -31,6 +36,10 @@ app = FastAPI(title="Draw Subagent Server")
 
 class DrawRequest(BaseModel):
     query: str
+
+
+class ActRequest(BaseModel):
+    intent: str
 
 
 class P5Request(BaseModel):
@@ -66,6 +75,47 @@ async def draw(request: DrawRequest):
         logger.info(f"  ✓ {len(result)} tools in {elapsed:.2f}s")
 
         return {"toolCalls": result}
+    except Exception as e:
+        logger.error(f"  ✗ Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/act")
+async def act(request: ActRequest):
+    """
+    Process an act intent and return tool calls with timing breakdown.
+    The act subagent interprets natural language intents into specific tool calls.
+    """
+    if not request.intent:
+        raise HTTPException(status_code=400, detail="Missing intent")
+
+    logger.info(f"📥 ACT: {request.intent}")
+    server_start = time.time()
+
+    try:
+        # Run in thread pool to not block async loop
+        result = await asyncio.to_thread(call_act_subagent, request.intent)
+        server_elapsed = (time.time() - server_start) * 1000
+
+        # Extract tool calls and timing from new format
+        tool_calls = result.get("tool_calls", [])
+        subagent_timing = result.get("timing", {})
+
+        # Log each tool call
+        for tc in tool_calls:
+            logger.info(f"  → {tc['tool']}({json.dumps(tc['params'], ensure_ascii=False)[:100]})")
+
+        model_ms = subagent_timing.get("model_ms", 0)
+        logger.info(f"  ✓ {len(tool_calls)} tools | model: {model_ms:.0f}ms | server: {server_elapsed:.0f}ms")
+
+        return {
+            "toolCalls": tool_calls,
+            "timing": {
+                "model_ms": model_ms,
+                "subagent_ms": subagent_timing.get("total_ms", 0),
+                "server_ms": round(server_elapsed, 1)
+            }
+        }
     except Exception as e:
         logger.error(f"  ✗ Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
