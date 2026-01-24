@@ -1,11 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
-import { spawn } from "child_process";
-import * as path from "path";
+
+const DRAW_SERVER_URL = process.env.DRAW_SERVER_URL || "http://localhost:5001";
+
+let callCount = 0;
 
 export async function POST(request: NextRequest) {
+  callCount++;
+  const callId = callCount;
+
   try {
     const body = await request.json();
     const { query } = body;
+
+    console.log(`[DRAW #${callId}] Called with: "${query}"`);
 
     if (!query || typeof query !== "string") {
       return NextResponse.json(
@@ -14,56 +21,32 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const agentPath = path.join(process.cwd(), "..", "agent");
-    const scriptPath = path.join(agentPath, "draw_subagent.py");
-    const venvPython = path.join(agentPath, "venv", "bin", "python");
-
-    const toolCalls = await new Promise<any[]>((resolve, reject) => {
-      const python = spawn(venvPython, [scriptPath, query], {
-        cwd: agentPath,
-        env: {
-          ...process.env,
-          GOOGLE_API_KEY: process.env.GOOGLE_API_KEY,
-        },
-      });
-
-      let stdout = "";
-      let stderr = "";
-
-      python.stdout.on("data", (data) => {
-        stdout += data.toString();
-      });
-
-      python.stderr.on("data", (data) => {
-        stderr += data.toString();
-      });
-
-      python.on("close", (code) => {
-        if (code !== 0) {
-          reject(new Error(`Python script exited with code ${code}. stderr: ${stderr}, stdout: ${stdout}`));
-          return;
-        }
-
-        try {
-          const lines = stdout.split("\n");
-          const jsonStartIndex = lines.findIndex((line) =>
-            line.trim().startsWith("[")
-          );
-          if (jsonStartIndex === -1) {
-            reject(new Error("Could not find JSON output"));
-            return;
-          }
-          const jsonOutput = lines.slice(jsonStartIndex).join("\n");
-          const parsed = JSON.parse(jsonOutput);
-          resolve(parsed);
-        } catch {
-          reject(new Error("Failed to parse JSON from Python script"));
-        }
-      });
+    // Call persistent Python server instead of spawning
+    const response = await fetch(`${DRAW_SERVER_URL}/draw`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query }),
     });
 
-    return NextResponse.json({ toolCalls });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: "Draw server error" }));
+      return NextResponse.json(
+        { error: error.detail || "Draw server error" },
+        { status: response.status }
+      );
+    }
+
+    const data = await response.json();
+    return NextResponse.json(data);
   } catch (error: any) {
+    // Check if it's a connection error (server not running)
+    if (error.cause?.code === "ECONNREFUSED") {
+      return NextResponse.json(
+        { error: "Draw server not running. Start with: cd agent && uvicorn draw_server:app --port 5001" },
+        { status: 503 }
+      );
+    }
+
     return NextResponse.json(
       { error: error.message || "Failed to process draw query" },
       { status: 500 }

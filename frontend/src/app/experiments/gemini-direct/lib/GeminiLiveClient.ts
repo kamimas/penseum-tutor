@@ -258,7 +258,8 @@ export class GeminiLiveClient extends EventEmitter<GeminiLiveClientEvents> {
 
   /**
    * Send a text message to Gemini using client content
-   * This triggers the model to generate a response (including audio)
+   * Note: This may not trigger audio response on native audio models.
+   * Use sendRealtimeText() instead for triggering audio responses.
    */
   sendText(text: string) {
     if (!this.session || this.state !== "connected") {
@@ -272,6 +273,21 @@ export class GeminiLiveClient extends EventEmitter<GeminiLiveClientEvents> {
       turns: [{ role: "user", parts: [{ text }] }],
       turnComplete: true,
     });
+  }
+
+  /**
+   * Send text via realtime input to trigger audio response
+   * Use this instead of sendText for native audio models that require
+   * realtime input to generate audio output.
+   */
+  sendRealtimeText(text: string) {
+    if (!this.session || this.state !== "connected") {
+      this.log("client", "Cannot send realtime text - not connected");
+      return;
+    }
+
+    this.log("client", `Sending realtime text: ${text}`);
+    this.session.sendRealtimeInput({ text });
   }
 
   /**

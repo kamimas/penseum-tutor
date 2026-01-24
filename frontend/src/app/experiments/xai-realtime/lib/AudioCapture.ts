@@ -1,6 +1,7 @@
 /**
- * AudioCapture - Captures microphone audio as PCM 16kHz for Gemini
- * Based on Google's reference implementation
+ * AudioCapture - Captures microphone audio as PCM 24kHz for xAI
+ *
+ * xAI requires 24kHz sample rate (unlike Gemini's 16kHz)
  */
 
 import { EventEmitter } from "eventemitter3";
@@ -8,8 +9,8 @@ import { EventEmitter } from "eventemitter3";
 // Inline worklet source - converts Float32 to Int16 PCM
 const AudioRecordingWorklet = `
 class AudioProcessingWorklet extends AudioWorkletProcessor {
-  // Buffer size of 512 at 16kHz = ~32ms chunks (31 times per second) - lower latency
-  buffer = new Int16Array(512);
+  // Buffer size of 2400 at 24kHz = 100ms chunks (10 times per second)
+  buffer = new Int16Array(2400);
   bufferWriteIndex = 0;
 
   constructor() {
@@ -50,7 +51,7 @@ class AudioProcessingWorklet extends AudioWorkletProcessor {
   }
 }
 
-registerProcessor("audio-recorder-worklet", AudioProcessingWorklet);
+registerProcessor("audio-recorder-worklet-24k", AudioProcessingWorklet);
 `;
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
@@ -77,7 +78,7 @@ export class AudioCapture extends EventEmitter<AudioCaptureEvents> {
   private audioContext: AudioContext | null = null;
   private source: MediaStreamAudioSourceNode | null = null;
   private worklet: AudioWorkletNode | null = null;
-  private sampleRate = 16000;
+  private sampleRate = 24000; // xAI requires 24kHz
   public recording = false;
 
   async start(): Promise<void> {
@@ -90,7 +91,7 @@ export class AudioCapture extends EventEmitter<AudioCaptureEvents> {
     // Get microphone stream
     this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-    // Create audio context at 16kHz (Gemini's required sample rate)
+    // Create audio context at 24kHz (xAI's required sample rate)
     this.audioContext = new AudioContext({ sampleRate: this.sampleRate });
 
     // Create source from microphone
@@ -98,14 +99,14 @@ export class AudioCapture extends EventEmitter<AudioCaptureEvents> {
 
     // Load and connect the worklet
     const workletUrl = createWorkletFromSrc(
-      "audio-recorder-worklet",
+      "audio-recorder-worklet-24k",
       AudioRecordingWorklet
     );
     await this.audioContext.audioWorklet.addModule(workletUrl);
 
     this.worklet = new AudioWorkletNode(
       this.audioContext,
-      "audio-recorder-worklet"
+      "audio-recorder-worklet-24k"
     );
 
     // Handle audio data from worklet

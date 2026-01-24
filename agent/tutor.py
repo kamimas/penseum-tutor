@@ -141,13 +141,15 @@ async def draw(context: RunContext, query: str) -> str:
     """
     Draw visuals on the whiteboard. USE THIS for any visual content: text, images, diagrams.
     Also use this to annotate/circle/highlight things on the whiteboard.
+    Also use this to ask the student questions (MCQ, fill-in-the-blank, long answer).
 
     A specialized sub-agent will decide the best way to visualize your request.
 
     Args:
         query: Natural language description of what to show (e.g., "show the water cycle",
                "display the pythagorean theorem", "draw a neuron diagram",
-               "circle the mitochondria", "highlight the equation")
+               "circle the mitochondria", "highlight the equation",
+               "quiz the student on photosynthesis", "ask a fill in the blank about mitosis")
     """
     logger.info(f"[DRAW TOOL] Sending draw_query to frontend: {query}")
 

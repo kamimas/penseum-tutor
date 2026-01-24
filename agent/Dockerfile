@@ -2,15 +2,14 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies if needed (audio libs)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY tutor.py .
+# Copy only the files needed for /gemini
+COPY draw_server.py .
+COPY draw_subagent.py .
+COPY p5js/ ./p5js/
 
-# Run the worker
-CMD ["python", "tutor.py", "dev"]
+EXPOSE 5001
+
+CMD ["uvicorn", "draw_server:app", "--host", "0.0.0.0", "--port", "5001"]

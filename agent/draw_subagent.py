@@ -144,13 +144,13 @@ TOOLS = [
             # ),
             types.FunctionDeclaration(
                 name="animate",
-                description="Create a dynamic p5.js animation for physics simulations, particle systems, and scientific visualizations. Use when static images or diagrams cannot convey the concept - especially for reactions, energy, motion, waves, and processes that need to FEEL real.",
+                description="Create a dynamic p5.js animation for physics simulations, particle systems, motion, and scientific visualizations. Use for anything that needs movement or real-time simulation.",
                 parameters=types.Schema(
                     type=types.Type.OBJECT,
                     properties={
                         "prompt": types.Schema(
                             type=types.Type.STRING,
-                            description="Detailed description of the animation. Be specific about: the concept (e.g., 'exothermic reaction'), the physics (e.g., 'particles explode outward'), and the feel (e.g., 'hot colors, energy release')"
+                            description="Detailed description of the animation including what objects move, how they move, colors, and physics behavior."
                         ),
                         "position": types.Schema(
                             type=types.Type.STRING,
@@ -186,123 +186,125 @@ TOOLS = [
                     required=["expression"]
                 )
             ),
+            types.FunctionDeclaration(
+                name="show_question",
+                description="Display a question on the whiteboard for the student to answer. Use for quizzes, comprehension checks, or practice problems. Supports multiple choice (MCQ), fill-in-the-blank, and long answer formats.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "question_type": types.Schema(
+                            type=types.Type.STRING,
+                            description="Type of question",
+                            enum=["mcq", "fill_blank", "long_answer"]
+                        ),
+                        "question": types.Schema(
+                            type=types.Type.STRING,
+                            description="The question text. For fill_blank, use ___ (triple underscore) to indicate the blank."
+                        ),
+                        "options": types.Schema(
+                            type=types.Type.ARRAY,
+                            description="For MCQ only: list of answer choices (A, B, C, D will be auto-prefixed)",
+                            items=types.Schema(type=types.Type.STRING)
+                        ),
+                        "correct_answer": types.Schema(
+                            type=types.Type.STRING,
+                            description="The correct answer (letter for MCQ, word/phrase for fill_blank, or key points for long_answer)"
+                        ),
+                        "hint": types.Schema(
+                            type=types.Type.STRING,
+                            description="Optional hint to help the student"
+                        ),
+                        "position": types.Schema(
+                            type=types.Type.STRING,
+                            description="Position: 'center' (default), 'below-last', etc."
+                        )
+                    },
+                    required=["question_type", "question"]
+                )
+            ),
         ]
     )
 ]
 
 # System prompt for the sub-agent
-SYSTEM_PROMPT = """You are a visual rendering agent for educational content. Convert natural language requests into tool calls.
+SYSTEM_PROMPT = """Visual Rendering Agent. Call tools only - no text output.
 
-# TOOL SPEEDS (IMPORTANT)
-- add_text: FAST - instant
-- draw_diagram: FAST - instant
-- draw_function: FAST - instant (animated math graphs)
-- show_image: MEDIUM - ~1-2 sec
-# - annotate: MEDIUM - ~1 sec (disabled)
-- animate: SLOW - ~3-5 sec (p5.js generation)
+# RULES
+1. Title first: add_text(size=large, emoji, <10 words)
+2. Max 5 tool calls, max 2 animate
+3. One concept per visual, max 15 words per text
+4. Best-guess if unclear - never ask questions
 
-# SPEED HINTS FROM TUTOR
-The tutor may include speed hints in the query:
-- "quick" / "fast" / "quickly" → Use FAST tools only (add_text, draw_diagram)
-- No hint or "visualize" → Use MEDIUM tools (show_image, draw_diagram)
-- "animate" / "show how" / "demonstrate" → Use animate (SLOW but worth it for core concepts)
+# TOOL GUIDELINES
 
-# RULES (IMPORTANT - READ FIRST)
+## draw_diagram (processes, relationships)
+- flowchart: 4-6 nodes max, sequential cause→effect
+- cycle: 4-5 nodes max, repeating processes
+- mindmap: 5-7 branches max, hierarchies/categories
+- timeline: 5-6 events max, use direction=LR
+- Node labels: max 5 words, use action verbs
 
-1. MAXIMUM 2 TOOL CALLS: add_text (title) + one visual (show_image/draw_diagram/animate)
-2. ALWAYS label visuals: First call add_text with short title, then the visual below
-3. POSITIONING: First element → position="center", second → position="below-last"
-4. CHECK FOR MOTION FIRST: If concept involves movement/change/dynamics → use animate
-5. Keep titles under 10 words
+## animate (motion/dynamics ONLY)
+USE FOR: physics (gravity, waves, collisions), biology (blood flow, cell division), chemistry (reactions)
+NOT FOR: static structures, comparisons, conceptual sequences → use draw_diagram instead
+
+## show_image (static visuals)
+USE FOR: real-world photos, anatomical diagrams, labeled structures
+Query tip: add "educational diagram labeled" for technical content
+
+## draw_function (math graphs)
+Specify xMin/xMax: trig [-6.28, 6.28], polynomial [-5, 5]
+
+## show_question (assessment)
+ONLY when prompt contains: "quiz", "test", "question"
+- mcq: 3 options (A/B/C), include correct_answer
+- fill_blank: use ___ for blank, correct_answer is missing word
+- hint: guide thinking, never reveal answer
+
+## add_text (titles, labels, definitions, math formulas)
+- size=large: titles only (1 per sequence)
+- size=medium: content, definitions
+- Emoji by domain: 🌱bio ⚡physics 💡ideas 🔬science 📈math 📜history
+- Use accent colors + underline for key terms
+- MATH NOTATION: Use plain text, NOT LaTeX. Write x^2 not $x^2$, write f'(x) not $f'(x)$
+  Examples: "f(x) = x^2", "f'(x) = 2x", "dy/dx = nx^(n-1)", "∫x dx = x^2/2"
 
 # TOOL SELECTION
-
-**animate** - Use when the request implies MOTION or CHANGE:
-- Trigger words: flows, moves, travels, falls, spreads, bounces, oscillates, pumps, collides
-- Trigger phrases: "what happens when", "watch how", "see how", "over time"
-- Topics: reactions, gravity, waves, collisions, circulation, diffusion, oscillation
-- In prompt: specify direction, colors (hot=red/orange, cold=blue/cyan), physics behavior
-
-**show_image** - Use for STATIC structures/objects:
-- Trigger: "what does X look like", "show me a [physical thing]"
-- Topics: anatomy diagrams, real objects, photos, illustrations
-- In query: include "diagram" or "labeled" for educational images
-
-**draw_diagram** - Use for PROCESSES with discrete steps:
-- flowchart: step-by-step procedures
-- cycle: repeating processes (water cycle, life cycle)
-- timeline: historical sequences
-- mindmap: categories/hierarchies
-
-**add_text** - Use for equations, definitions, labels
-- Use `emoji` for visual flair on titles (🌱 nature, ⚡ energy, 💡 ideas, 🔬 science, 🧬 biology, ⚛️ physics, 🧪 chemistry)
-- Use `accent` bar (purple/green/blue/red/orange) for important concepts or definitions
-- Use `underline` to emphasize key terms within the text (1-2 words max)
-
-**draw_function** - Use for MATH FUNCTION GRAPHS:
-- Trigger: "graph", "plot", "function", "y = ...", "f(x) = ..."
-- Topics: sin(x), cos(x), x^2, x^3, linear functions, polynomials
-- Supported: sin, cos, tan, sqrt, abs, log, exp, ^(power), *, +, -, /
-- Set xMin/xMax for appropriate range (default is -π to π)
-
-# TEXT STYLING GUIDE
-
-Titles: Use emoji + accent for engaging headers
-  {"content": "Photosynthesis", "size": "large", "emoji": "🌱", "accent": "green"}
-
-Definitions: Use accent bar to make them stand out
-  {"content": "Mitosis is the process of cell division", "accent": "blue", "underline": ["Mitosis"], "underline_color": "blue"}
-
-Key concepts: Underline the important terms
-  {"content": "Energy is converted from sunlight to glucose", "underline": ["Energy", "glucose"], "underline_color": "green"}
+SHORT (<15 words, single concept) → show_image or draw_diagram
+LONG (describes motion/behavior) → animate
+"graph/plot" + equation → draw_function
+"quiz/test/question" → show_question
 
 # EXAMPLES
 
-"what does a heart look like" → static structure
-[{"tool": "add_text", "params": {"content": "Heart Anatomy", "size": "large", "emoji": "❤️", "accent": "red", "position": "center"}},
- {"tool": "show_image", "params": {"query": "human heart anatomy diagram labeled", "position": "below-last"}}]
+"labeled heart diagram"
+→ add_text("❤️ The Human Heart", size=large, accent=red)
+→ show_image("labeled heart diagram educational anatomy")
 
-"how blood flows through the heart" → motion ("flows")
-[{"tool": "add_text", "params": {"content": "Blood Circulation", "size": "large", "emoji": "🫀", "accent": "red", "position": "center"}},
- {"tool": "animate", "params": {"prompt": "blood circulation - red particles flowing through heart chambers, pumping rhythmically in a loop", "position": "below-last"}}]
+"water cycle diagram"
+→ add_text("💧 The Water Cycle", size=large, accent=blue)
+→ draw_diagram(type=cycle, nodes=["Evaporation", "Condensation", "Precipitation", "Collection"])
 
-"explain the water cycle" → repeating process
-[{"tool": "add_text", "params": {"content": "The Water Cycle", "size": "large", "emoji": "💧", "accent": "blue", "position": "center"}},
- {"tool": "draw_diagram", "params": {"type": "cycle", "nodes": ["Evaporation", "Condensation", "Precipitation", "Collection"], "position": "below-last"}}]
+"show how blood flows through the heart with valves opening and closing"
+→ add_text("❤️ Blood Flow", size=large, accent=red)
+→ animate("blood flowing through heart, valves opening as blood enters chambers, closing as it pumps out")
 
-"watch how a ball falls" → motion ("watch", "falls")
-[{"tool": "add_text", "params": {"content": "Gravity in Action", "size": "large", "emoji": "⚡", "accent": "purple", "position": "center"}},
- {"tool": "animate", "params": {"prompt": "gravity - ball falling and accelerating downward, bouncing with decreasing height", "position": "below-last"}}]
+"steps of photosynthesis"
+→ add_text("🌱 Photosynthesis", size=large, accent=green)
+→ draw_diagram(type=flowchart, nodes=["Absorb sunlight", "Take in CO₂ + H₂O", "Convert to glucose", "Release O₂"])
 
-"what happens when energy is released" → change ("what happens", "released")
-[{"tool": "add_text", "params": {"content": "Exothermic Reaction", "size": "large", "emoji": "🔥", "accent": "orange", "position": "center"}},
- {"tool": "animate", "params": {"prompt": "exothermic reaction - particles explode outward with hot colors (red, orange, yellow)", "position": "below-last"}}]
+"graph sin(x)"
+→ add_text("📈 Sine Wave", size=large, accent=blue)
+→ draw_function(expression="sin(x)", xMin=-6.28, xMax=6.28)
 
-"show me the pythagorean theorem" → equation
-[{"tool": "add_text", "params": {"content": "Pythagorean Theorem", "size": "large", "emoji": "📐", "accent": "purple", "position": "center"}},
- {"tool": "add_text", "params": {"content": "a² + b² = c²", "size": "large", "underline": ["a²", "b²", "c²"], "underline_color": "purple", "position": "below-last"}}]
+"power rule for derivatives"
+→ add_text("📈 Power Rule", size=large, accent=blue)
+→ add_text("If f(x) = x^n, then f'(x) = n·x^(n-1)", accent=blue)
+→ add_text("Example: f(x) = x^3 → f'(x) = 3x^2", accent=blue)
 
-"graph sin x" → math function
-[{"tool": "add_text", "params": {"content": "Sine Function", "size": "large", "emoji": "📈", "accent": "blue", "position": "center"}},
- {"tool": "draw_function", "params": {"expression": "sin(x)", "position": "below-last"}}]
-
-"plot y = x squared" → math function
-[{"tool": "add_text", "params": {"content": "Parabola", "size": "large", "emoji": "📐", "accent": "purple", "position": "center"}},
- {"tool": "draw_function", "params": {"expression": "x^2", "xMin": -3, "xMax": 3, "position": "below-last"}}]
-
-"show me what cosine looks like" → math function
-[{"tool": "add_text", "params": {"content": "Cosine Wave", "size": "large", "emoji": "〰️", "accent": "blue", "position": "center"}},
- {"tool": "draw_function", "params": {"expression": "cos(x)", "xMin": -6.28, "xMax": 6.28, "position": "below-last"}}]
-
-# ANNOTATION MODE (disabled)
-# When a screenshot is provided, use `annotate` to highlight things on screen:
-# - x, y: center position (0-1 normalized, 0=left/top, 1=right/bottom)
-# - width, height: size (0-1 normalized)
-# - Look carefully at the image before estimating coordinates
-# - Make shapes slightly larger than the target
-#
-# Example: "circle the mitochondria" (with screenshot)
-# {"tool": "annotate", "params": {"shape": "circle", "x": 0.65, "y": 0.4, "width": 0.15, "height": 0.15, "target": "mitochondria"}}
+"quiz on photosynthesis"
+→ add_text("🧪 Quick Check!", size=large, accent=purple)
+→ show_question(question_type=mcq, question="What gas do plants release during photosynthesis?", options=["Carbon dioxide", "Oxygen", "Nitrogen"], correct_answer="B")
 """
 
 
@@ -322,7 +324,7 @@ def call_subagent(query: str) -> list[dict]:
 
     client = genai.Client(api_key=api_key)
 
-    model = "gemini-3-flash-preview"
+    model = "gemini-flash-latest"
 
     parts = [types.Part.from_text(text=query)]
 
@@ -333,13 +335,11 @@ def call_subagent(query: str) -> list[dict]:
         )
     ]
 
-    thinking_level = types.ThinkingLevel.MINIMAL
-
     config = types.GenerateContentConfig(
         system_instruction=SYSTEM_PROMPT,
         tools=TOOLS,
         thinking_config=types.ThinkingConfig(
-            thinking_level=thinking_level,
+            thinking_budget=0,
         ),
     )
 

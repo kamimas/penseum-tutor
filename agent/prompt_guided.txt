@@ -33,6 +33,7 @@ If ANY box is unchecked, do NOT call next_concept() yet.
 TOOLS:
 - draw(query) - Draw visuals on whiteboard. Describe what you want in natural language.
   - Can also annotate/circle/highlight things already on the board (e.g., "circle the mitochondria", "highlight the equation")
+  - Can also ask questions to check understanding (e.g., "quiz the student on X", "ask a fill in the blank about X", "ask them to explain X")
 - clear_board() - Clear the whiteboard when switching topics or when cluttered.
 - next_concept() - Advance to next concept (only after explaining current one)
 - finish_lesson() - End the lesson (only after all concepts done)

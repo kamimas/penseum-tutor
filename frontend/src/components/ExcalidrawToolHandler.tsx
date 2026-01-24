@@ -79,27 +79,21 @@ interface ToolParams {
   expression?: string;  // e.g., "sin(x)", "x^2"
   xMin?: number;
   xMax?: number;
+  // Question params
+  question_type?: "mcq" | "fill_blank" | "long_answer";
+  question?: string;
+  options?: string[];
+  correct_answer?: string;
+  hint?: string;
 }
 
-// Track last element for relative positioning (lookup current bounds when needed)
-// For single elements: stores element ID
-// For diagrams: stores groupId (prefixed with "group:")
-// For animations: stores animationId (prefixed with "animation:")
-let lastElementId: string | null = null;
-
-// Track animations as native Excalidraw elements
-// We render p5.js to a hidden canvas, capture frames, and update an image element
-interface AnimationElement {
-  id: string;
-  elementId: string;  // Excalidraw element ID
-  fileId: string;     // Excalidraw file ID for the image
-  canvas: HTMLCanvasElement;
-  p5Instance: any;    // p5.js instance
-  intervalId: number; // For frame updates
-  width: number;
-  height: number;
-}
-const animationElements: Map<string, AnimationElement> = new Map();
+// ============================================
+// POSITIONING - Simple scene-based layout
+// ============================================
+//
+// Logic: Query scene for lowest element, place new content below it.
+// First element centers in viewport. Subsequent elements stack vertically.
+// Async tools (images, animations) place placeholders immediately.
 
 interface ExcalidrawToolHandlerProps {
   excalidrawAPI: ExcalidrawAPI;
@@ -193,218 +187,112 @@ function getResponsiveSize(
 }
 
 /**
+ * Get the lowest Y coordinate of all elements in the scene.
+ * Returns 0 if scene is empty.
+ */
+function getLowestY(excalidrawAPI: ExcalidrawAPI): number {
+  const elements = excalidrawAPI.getSceneElements();
+  let lowestY = 0;
+
+  for (const el of elements) {
+    if (!el.isDeleted) {
+      const bottom = el.y + el.height;
+      if (bottom > lowestY) {
+        lowestY = bottom;
+      }
+    }
+  }
+
+  return lowestY;
+}
+
+/**
+ * Get the X coordinate to center an element in the viewport.
+ */
+function getViewportCenterX(excalidrawAPI: ExcalidrawAPI, elementWidth: number): number {
+  const appState = excalidrawAPI.getAppState();
+  const { scrollX, zoom, width: viewportWidth } = appState;
+  const zoomValue = zoom?.value || 1;
+  const viewportW = (viewportWidth || 1280) / zoomValue;
+  const viewportLeft = -scrollX;
+
+  return viewportLeft + (viewportW - elementWidth) / 2;
+}
+
+/**
+ * Get the Y coordinate to center an element in the viewport.
+ */
+function getViewportCenterY(excalidrawAPI: ExcalidrawAPI, elementHeight: number): number {
+  const appState = excalidrawAPI.getAppState();
+  const { scrollY, zoom, height: viewportHeight } = appState;
+  const zoomValue = zoom?.value || 1;
+  const viewportH = (viewportHeight || 720) / zoomValue;
+  const viewportTop = -scrollY;
+
+  return viewportTop + (viewportH - elementHeight) / 2;
+}
+
+/**
  * Scroll the viewport to ensure a position is visible.
- * Called after placing an element to keep it in view.
- * Uses Excalidraw's native scrollToContent with smooth animation.
  */
 function scrollToShowPosition(
   excalidrawAPI: ExcalidrawAPI,
-  x: number,
   y: number,
-  width: number,
   height: number
 ): void {
   const appState = excalidrawAPI.getAppState();
   const { scrollY, zoom, height: viewportHeight } = appState;
   const zoomValue = zoom?.value || 1;
-
-  // Calculate viewport bounds in scene coordinates
-  const viewportTop = -scrollY;
   const viewportH = (viewportHeight || 720) / zoomValue;
+  const viewportTop = -scrollY;
   const viewportBottom = viewportTop + viewportH;
 
-  // Check if element bottom is below viewport
   const elementBottom = y + height;
-  const padding = 50; // Keep some padding from edge
+  const padding = 50;
 
   if (elementBottom > viewportBottom - padding) {
-    // Calculate how much we need to scroll down
     const scrollAmount = elementBottom - viewportBottom + padding + 50;
-
-    // Update scroll position directly - more reliable than scrollToContent
-    // scrollY is negative (scroll down = more negative)
-    const newScrollY = scrollY - scrollAmount;
-
     excalidrawAPI.updateScene({
-      appState: {
-        scrollY: newScrollY,
-      },
+      appState: { scrollY: scrollY - scrollAmount },
     });
   }
 }
 
+// Gap between stacked elements
+const STACK_GAP = 40;
+
 /**
- * Calculate position coordinates based on position string and viewport.
- * Returns { x, y } in scene coordinates.
- * Now includes collision detection to prevent overlap.
+ * Calculate position for a new element.
+ *
+ * Simple logic:
+ * - If scene is empty: center in viewport
+ * - Otherwise: stack below the lowest element, centered horizontally
  */
-function calculatePosition(
+function getNextPosition(
   excalidrawAPI: ExcalidrawAPI,
-  position: PositionType,
   elementWidth: number,
   elementHeight: number
 ): { x: number; y: number } {
-  const appState = excalidrawAPI.getAppState();
-  const { scrollX, scrollY, zoom, width: viewportWidth, height: viewportHeight } = appState;
-  const zoomValue = zoom?.value || 1;
+  const lowestY = getLowestY(excalidrawAPI);
+  const centerX = getViewportCenterX(excalidrawAPI, elementWidth);
 
-  // Calculate viewport bounds in scene coordinates
-  const viewportLeft = -scrollX;
-  const viewportTop = -scrollY;
-  const viewportW = (viewportWidth || 1280) / zoomValue;
-  const viewportH = (viewportHeight || 720) / zoomValue;
+  let x: number;
+  let y: number;
 
-  // Padding from edges
-  const padding = 50;
-
-  let proposedX: number;
-  let proposedY: number;
-
-  // If there's existing content and position is "center", place below last instead
-  // This prevents new batches from overlapping previous content
-  const effectivePosition = (position === "center" && lastElementId) ? "below-last" : position;
-
-  // Handle relative positions - lookup current bounds from scene
-  if (effectivePosition === "below-last" || effectivePosition === "right-of-last") {
-    let lastBounds: { x: number; y: number; width: number; height: number } | null = null;
-
-    if (lastElementId) {
-      const elements = excalidrawAPI.getSceneElements();
-
-      if (lastElementId.startsWith("group:")) {
-        // Compute bounding box of all elements in the group
-        const groupId = lastElementId.slice(6);
-        const groupElements = elements.filter(
-          (el: any) => !el.isDeleted && el.groupIds?.includes(groupId)
-        );
-        if (groupElements.length > 0) {
-          let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-          for (const el of groupElements) {
-            minX = Math.min(minX, el.x);
-            minY = Math.min(minY, el.y);
-            maxX = Math.max(maxX, el.x + el.width);
-            maxY = Math.max(maxY, el.y + el.height);
-          }
-          lastBounds = { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
-        }
-      } else if (lastElementId.startsWith("animation:")) {
-        // Animation elements are now native Excalidraw elements, look them up directly
-        const animId = lastElementId.slice(10);
-        const anim = animationElements.get(animId);
-        if (anim) {
-          const animElement = elements.find((el: any) => el.id === anim.elementId && !el.isDeleted);
-          if (animElement) {
-            lastBounds = {
-              x: animElement.x,
-              y: animElement.y,
-              width: animElement.width,
-              height: animElement.height,
-            };
-          }
-        }
-      } else {
-        // Single element lookup
-        const lastElement = elements.find((el: any) => el.id === lastElementId && !el.isDeleted);
-        if (lastElement) {
-          lastBounds = {
-            x: lastElement.x,
-            y: lastElement.y,
-            width: lastElement.width,
-            height: lastElement.height,
-          };
-        }
-      }
-    }
-
-    if (lastBounds) {
-      if (position === "below-last") {
-        proposedX = lastBounds.x;
-        proposedY = lastBounds.y + lastBounds.height + 30;
-      } else {
-        proposedX = lastBounds.x + lastBounds.width + 30;
-        proposedY = lastBounds.y;
-      }
-    } else {
-      // Fall back to center if no last element found
-      proposedX = viewportLeft + (viewportW - elementWidth) / 2;
-      proposedY = viewportTop + (viewportH - elementHeight) / 2;
-    }
+  if (lowestY === 0) {
+    // Empty scene: center in viewport
+    x = centerX;
+    y = getViewportCenterY(excalidrawAPI, elementHeight);
   } else {
-    // Calculate grid positions (3x3)
-    const colPositions = {
-      left: viewportLeft + padding,
-      center: viewportLeft + (viewportW - elementWidth) / 2,
-      right: viewportLeft + viewportW - elementWidth - padding,
-    };
-
-    const rowPositions = {
-      top: viewportTop + padding,
-      middle: viewportTop + (viewportH - elementHeight) / 2,
-      bottom: viewportTop + viewportH - elementHeight - padding,
-    };
-
-    // Map position string to coordinates
-    switch (position) {
-      case "top-left":
-        proposedX = colPositions.left;
-        proposedY = rowPositions.top;
-        break;
-      case "top-center":
-        proposedX = colPositions.center;
-        proposedY = rowPositions.top;
-        break;
-      case "top-right":
-        proposedX = colPositions.right;
-        proposedY = rowPositions.top;
-        break;
-      case "middle-left":
-        proposedX = colPositions.left;
-        proposedY = rowPositions.middle;
-        break;
-      case "center":
-        proposedX = colPositions.center;
-        proposedY = rowPositions.middle;
-        break;
-      case "middle-right":
-        proposedX = colPositions.right;
-        proposedY = rowPositions.middle;
-        break;
-      case "bottom-left":
-        proposedX = colPositions.left;
-        proposedY = rowPositions.bottom;
-        break;
-      case "bottom-center":
-        proposedX = colPositions.center;
-        proposedY = rowPositions.bottom;
-        break;
-      case "bottom-right":
-        proposedX = colPositions.right;
-        proposedY = rowPositions.bottom;
-        break;
-      default:
-        // Default to center
-        proposedX = colPositions.center;
-        proposedY = rowPositions.middle;
-    }
+    // Stack below existing content, centered
+    x = centerX;
+    y = lowestY + STACK_GAP;
   }
 
-  // Auto-scroll to show the element if it's below the viewport
-  scrollToShowPosition(
-    excalidrawAPI,
-    proposedX,
-    proposedY,
-    elementWidth,
-    elementHeight
-  );
+  // Auto-scroll to show the new element
+  scrollToShowPosition(excalidrawAPI, y, elementHeight);
 
-  return { x: proposedX, y: proposedY };
-}
-
-/**
- * Set the last element ID for relative positioning.
- */
-function setLastElementId(id: string): void {
-  lastElementId = id;
+  return { x, y };
 }
 
 // ============================================
@@ -519,9 +407,6 @@ function measureText(text: string, fontSize: number, fontFamily: number): { widt
   return { width: Math.max(paddedWidth, 10), height: Math.max(height, fontSize) };
 }
 
-// Animation timing for text
-const TEXT_WORD_DELAY = 150; // ms between words appearing
-
 /**
  * Measure the width of a substring within text (for underline positioning)
  */
@@ -565,7 +450,6 @@ function handleAddText(
   const {
     content = "",
     size = "medium",
-    position = "center",
     emoji,
     accent,
     underline,
@@ -578,12 +462,11 @@ function handleAddText(
 
   // Prepend emoji if provided
   const displayContent = emoji ? `${emoji} ${content}` : content;
-
   const fontSize = getFontSize(size);
 
   // Check if content contains LaTeX - render as image if so
   if (containsLatex(content)) {
-    handleAddLatex(excalidrawAPI, displayContent, fontSize, position as PositionType);
+    handleAddLatex(excalidrawAPI, displayContent, fontSize);
     return;
   }
 
@@ -598,21 +481,15 @@ function handleAddText(
   const accentGap = accent && accent !== "none" ? 12 : 0;
   const totalWidth = fullWidth + accentBarWidth + accentGap;
 
-  // Calculate position based on position parameter
-  const { x: posX, y: posY } = calculatePosition(
-    excalidrawAPI,
-    position as PositionType,
-    totalWidth,
-    height
-  );
+  // Calculate total height including underlines
+  const underlineHeight = underline && underline.length > 0 ? 5 : 0;
+  const totalHeight = height + underlineHeight;
 
-  // Get current elements
-  const existingElements = excalidrawAPI.getSceneElements();
+  // Get position (stacks below existing content)
+  const { x: posX, y: posY } = getNextPosition(excalidrawAPI, totalWidth, totalHeight);
 
-  // Build animation queue
-  type AnimationItem = { element: any; delay: number };
-  const animationQueue: AnimationItem[] = [];
-  let currentDelay = 0;
+  // Build all elements to add at once
+  const newElements: any[] = [];
 
   // Text position (offset by accent bar if present)
   const textX = posX + accentBarWidth + accentGap;
@@ -620,7 +497,7 @@ function handleAddText(
 
   // 1. Create accent bar if specified
   if (accent && accent !== "none") {
-    const accentElement = {
+    newElements.push({
       id: generateId(),
       type: "rectangle" as const,
       x: posX,
@@ -647,80 +524,63 @@ function handleAddText(
       updated: Date.now(),
       link: null,
       locked: false,
-    };
-    animationQueue.push({ element: accentElement, delay: currentDelay });
-    currentDelay += 50; // Small delay before text starts
-  }
-
-  // 2. Create text elements word by word for typing animation
-  const words = displayContent.split(" ");
-  let currentText = "";
-
-  for (let i = 0; i < words.length; i++) {
-    currentText = words.slice(0, i + 1).join(" ");
-    const { width: currentWidth } = measureText(currentText, fontSize, fontFamily);
-
-    const textElement = {
-      id: generateId(),
-      type: "text" as const,
-      x: textX,
-      y: textY,
-      width: currentWidth,
-      height: height,
-      angle: 0,
-      strokeColor: "#1e1e1e",
-      backgroundColor: "transparent",
-      fillStyle: "solid" as const,
-      strokeWidth: 2,
-      strokeStyle: "solid" as const,
-      roughness: 1,
-      opacity: 100,
-      groupIds: [groupId],
-      frameId: null,
-      index: "a0" as const,
-      roundness: null,
-      seed: Math.floor(Math.random() * 100000),
-      version: 1,
-      versionNonce: Math.floor(Math.random() * 100000),
-      isDeleted: false,
-      boundElements: null,
-      updated: Date.now(),
-      link: null,
-      locked: false,
-      text: currentText,
-      fontSize: fontSize,
-      fontFamily: fontFamily,
-      textAlign: "left" as const,
-      verticalAlign: "top" as const,
-      containerId: null,
-      originalText: currentText,
-      autoResize: true,
-      lineHeight: 1.25,
-    };
-
-    // Mark intermediate text elements for removal (except the last one)
-    animationQueue.push({
-      element: { ...textElement, _isIntermediate: i < words.length - 1 },
-      delay: currentDelay
     });
-    currentDelay += TEXT_WORD_DELAY;
   }
+
+  // 2. Create text element (full text, no animation)
+  newElements.push({
+    id: generateId(),
+    type: "text" as const,
+    x: textX,
+    y: textY,
+    width: fullWidth,
+    height: height,
+    angle: 0,
+    strokeColor: "#1e1e1e",
+    backgroundColor: "transparent",
+    fillStyle: "solid" as const,
+    strokeWidth: 2,
+    strokeStyle: "solid" as const,
+    roughness: 1,
+    opacity: 100,
+    groupIds: [groupId],
+    frameId: null,
+    index: "a0" as const,
+    roundness: null,
+    seed: Math.floor(Math.random() * 100000),
+    version: 1,
+    versionNonce: Math.floor(Math.random() * 100000),
+    isDeleted: false,
+    boundElements: null,
+    updated: Date.now(),
+    link: null,
+    locked: false,
+    text: displayContent,
+    fontSize: fontSize,
+    fontFamily: fontFamily,
+    textAlign: "left" as const,
+    verticalAlign: "top" as const,
+    containerId: null,
+    originalText: displayContent,
+    autoResize: true,
+    lineHeight: 1.25,
+  });
 
   // 3. Create underlines if specified
   if (underline && underline.length > 0) {
-    const underlineY = textY + height + 2; // Just below the text
-    const underlineHeight = 3;
+    const underlineY = textY + height + 2;
+    const underlineH = 3;
 
     for (const word of underline) {
-      const position = measureSubstringPosition(displayContent, word, fontSize, fontFamily);
-      if (position) {
-        const underlineElement = {
+      const pos = measureSubstringPosition(displayContent, word, fontSize, fontFamily);
+      if (pos) {
+        newElements.push({
           id: generateId(),
           type: "rectangle" as const,
-          x: textX + position.startX,
+          x: textX + pos.startX,
           y: underlineY,
-          width: position.width,
-          height: underlineHeight,
+          width: pos.width,
+          height: underlineH,
           angle: 0,
           strokeColor: "transparent",
           backgroundColor: COLOR_MAP[underline_color] || COLOR_MAP.purple,
@@ -741,46 +601,16 @@ function handleAddText(
           updated: Date.now(),
           link: null,
           locked: false,
-        };
-        animationQueue.push({ element: underlineElement, delay: currentDelay });
-        currentDelay += 50; // Small delay between underlines
+        });
       }
     }
   }
 
-  // Animate: add elements sequentially, removing intermediate text elements
-  // Use object to avoid closure issues with setTimeout
-  const state = {
-    elements: [...existingElements],
-    lastTextElementId: null as string | null,
-  };
-
-  animationQueue.forEach(({ element, delay }) => {
-    setTimeout(() => {
-      // If this is a text element and there's a previous intermediate one, remove it
-      if (element.type === "text" && state.lastTextElementId) {
-        state.elements = state.elements.filter(el => el.id !== state.lastTextElementId);
-      }
-
-      // Add the new element (without the _isIntermediate flag)
-      const { _isIntermediate, ...cleanElement } = element;
-      state.elements = [...state.elements, cleanElement];
-
-      // Track intermediate text elements for removal
-      if (element.type === "text" && _isIntermediate) {
-        state.lastTextElementId = cleanElement.id;
-      } else if (element.type === "text") {
-        state.lastTextElementId = null; // Final text element, don't remove
-      }
-
-      excalidrawAPI.updateScene({
-        elements: state.elements,
-      });
-    }, delay);
+  // Add all elements at once (no animation, no race condition)
+  const existingElements = excalidrawAPI.getSceneElements();
+  excalidrawAPI.updateScene({
+    elements: [...existingElements, ...newElements],
   });
-
-  // Track for relative positioning (use group ID)
-  setLastElementId(`group:${groupId}`);
 }
 
 /**
@@ -789,8 +619,7 @@ function handleAddText(
 async function handleAddLatex(
   excalidrawAPI: ExcalidrawAPI,
   content: string,
-  fontSize: number,
-  position: PositionType
+  fontSize: number
 ): Promise<void> {
   const convert = await getConvertToExcalidrawElements();
 
@@ -798,17 +627,11 @@ async function handleAddLatex(
     const { svg: dataUrl, width, height } = renderLatexToSvg(content, fontSize);
     const elements = excalidrawAPI.getSceneElements();
 
-    // Calculate position
-    const { x: posX, y: posY } = calculatePosition(
-      excalidrawAPI,
-      position,
-      width,
-      height
-    );
+    // Get position (stacks below existing content)
+    const { x: posX, y: posY } = getNextPosition(excalidrawAPI, width, height);
 
-    const fileId = generateId() as any; // FileId branded type
+    const fileId = generateId() as any;
 
-    // Use convertToExcalidrawElements for cleaner element creation
     const [imageElement] = convert([
       {
         type: "image",
@@ -824,7 +647,6 @@ async function handleAddLatex(
       elements: [...elements, imageElement],
     });
 
-    // Add SVG file to Excalidraw
     excalidrawAPI.addFiles([
       {
         id: fileId,
@@ -834,17 +656,14 @@ async function handleAddLatex(
         lastRetrieved: Date.now(),
       },
     ]);
-
-    setLastElementId(imageElement.id);
   } catch (error) {
     console.error("[handleAddLatex] Failed to render LaTeX:", error);
     // Fallback to plain text if LaTeX rendering fails
     const elements = excalidrawAPI.getSceneElements();
     const fontFamily = 1;
     const { width, height } = measureText(content, fontSize, fontFamily);
-    const { x: posX, y: posY } = calculatePosition(excalidrawAPI, position, width, height);
+    const { x: posX, y: posY } = getNextPosition(excalidrawAPI, width, height);
 
-    // Use convertToExcalidrawElements for cleaner element creation
     const [textElement] = convert([
       {
         type: "text",
@@ -859,38 +678,82 @@ async function handleAddLatex(
     excalidrawAPI.updateScene({
       elements: [...elements, textElement],
     });
-    setLastElementId(textElement.id);
   }
 }
+
+// Default size for image placeholder (before we know actual dimensions)
+const IMAGE_PLACEHOLDER_SIZE = { width: 400, height: 300 };
 
 async function handleShowImage(
   excalidrawAPI: ExcalidrawAPI,
   params: ToolParams
 ): Promise<void> {
-  const { query, url, position = "center" } = params;
+  const { query, url } = params;
+
+  // Reserve space immediately with a placeholder
+  // This prevents race conditions with subsequent tool calls
+  const placeholderSize = getResponsiveSize(
+    IMAGE_PLACEHOLDER_SIZE.width,
+    IMAGE_PLACEHOLDER_SIZE.height,
+    excalidrawAPI
+  );
+  const { x: posX, y: posY } = getNextPosition(
+    excalidrawAPI,
+    placeholderSize.width,
+    placeholderSize.height
+  );
+
+  // Create placeholder element
+  const placeholderId = generateId();
+  const placeholderElement = {
+    id: placeholderId,
+    type: "rectangle" as const,
+    x: posX,
+    y: posY,
+    width: placeholderSize.width,
+    height: placeholderSize.height,
+    angle: 0,
+    strokeColor: "#adb5bd",
+    backgroundColor: "#f8f9fa",
+    fillStyle: "solid" as const,
+    strokeWidth: 1,
+    strokeStyle: "dashed" as const,
+    roughness: 0,
+    opacity: 50,
+    groupIds: [],
+    frameId: null,
+    index: "a0" as const,
+    roundness: { type: 3 },
+    seed: Math.floor(Math.random() * 100000),
+    version: 1,
+    versionNonce: Math.floor(Math.random() * 100000),
+    isDeleted: false,
+    boundElements: null,
+    updated: Date.now(),
+    link: null,
+    locked: false,
+  };
+
+  // Add placeholder to scene immediately
+  let elements = excalidrawAPI.getSceneElements();
+  excalidrawAPI.updateScene({
+    elements: [...elements, placeholderElement],
+  });
 
   let dataUrl = "";
 
-  // If query is provided, search for the image (API returns base64 dataUrl)
+  // Fetch the image
   if (query && !url) {
     try {
       const response = await fetch(`/api/image-search?q=${encodeURIComponent(query)}`);
       const data = await response.json();
       if (data.dataUrl) {
         dataUrl = data.dataUrl;
-      } else if (data.error) {
-        handleAddText(excalidrawAPI, { content: `[Image: ${query}]`, size: "medium", position });
-        return;
-      } else {
-        handleAddText(excalidrawAPI, { content: `[Image: ${query}]`, size: "medium", position });
-        return;
       }
     } catch {
-      handleAddText(excalidrawAPI, { content: `[Image: ${query}]`, size: "medium", position });
-      return;
+      // Failed to fetch
     }
   } else if (url) {
-    // If URL is provided directly, try to fetch it (may fail due to CORS)
     try {
       const response = await fetch(url);
       const blob = await response.blob();
@@ -900,12 +763,54 @@ async function handleShowImage(
         reader.readAsDataURL(blob);
       });
     } catch {
-      handleAddText(excalidrawAPI, { content: `[Image failed to load]`, size: "medium", position });
-      return;
+      // Failed to fetch
     }
   }
 
+  // Remove placeholder
+  elements = excalidrawAPI.getSceneElements();
+  elements = elements.filter((el: any) => el.id !== placeholderId);
+
   if (!dataUrl) {
+    // Show error text at placeholder position
+    const errorElement = {
+      id: generateId(),
+      type: "text" as const,
+      x: posX,
+      y: posY,
+      width: 200,
+      height: 28,
+      angle: 0,
+      strokeColor: "#868e96",
+      backgroundColor: "transparent",
+      fillStyle: "solid" as const,
+      strokeWidth: 2,
+      strokeStyle: "solid" as const,
+      roughness: 1,
+      opacity: 100,
+      groupIds: [],
+      frameId: null,
+      index: "a0" as const,
+      roundness: null,
+      seed: Math.floor(Math.random() * 100000),
+      version: 1,
+      versionNonce: Math.floor(Math.random() * 100000),
+      isDeleted: false,
+      boundElements: null,
+      updated: Date.now(),
+      link: null,
+      locked: false,
+      text: `[Image: ${query || url}]`,
+      fontSize: 20,
+      fontFamily: 1,
+      textAlign: "left" as const,
+      verticalAlign: "top" as const,
+      containerId: null,
+      originalText: `[Image: ${query || url}]`,
+      autoResize: true,
+      lineHeight: 1.25,
+    };
+    excalidrawAPI.updateScene({ elements: [...elements, errorElement] });
     return;
   }
 
@@ -918,25 +823,14 @@ async function handleShowImage(
       img.src = dataUrl;
     });
 
-    // Scale image to fit viewport (max 500px base, responsive)
+    // Scale image to fit viewport
     const { width: maxWidth } = getResponsiveSize(500, 500, excalidrawAPI);
     const scale = Math.min(1, maxWidth / img.width);
     const width = img.width * scale;
     const height = img.height * scale;
 
-    // Generate file ID
-    const fileId = generateId() as any; // FileId branded type
+    const fileId = generateId() as any;
 
-    // Calculate position based on position parameter
-    const elements = excalidrawAPI.getSceneElements();
-    const { x: posX, y: posY } = calculatePosition(
-      excalidrawAPI,
-      position as PositionType,
-      width,
-      height
-    );
-
-    // Use convertToExcalidrawElements for cleaner element creation
     const convert = await getConvertToExcalidrawElements();
     const [imageElement] = convert([
       {
@@ -953,7 +847,6 @@ async function handleShowImage(
       elements: [...elements, imageElement],
     });
 
-    // Add file to Excalidraw - extract mimeType from dataUrl (format: data:image/jpeg;base64,...)
     const mimeMatch = dataUrl.match(/^data:([^;]+);/);
     const mimeType = mimeMatch ? mimeMatch[1] : "image/png";
     excalidrawAPI.addFiles([
@@ -965,11 +858,46 @@ async function handleShowImage(
         lastRetrieved: Date.now(),
       },
     ]);
-
-    // Track for relative positioning
-    setLastElementId(imageElement.id);
   } catch {
-    handleAddText(excalidrawAPI, { content: `[Image failed: ${query || url}]`, size: "medium", position });
+    // Show error
+    const errorElement = {
+      id: generateId(),
+      type: "text" as const,
+      x: posX,
+      y: posY,
+      width: 200,
+      height: 28,
+      angle: 0,
+      strokeColor: "#868e96",
+      backgroundColor: "transparent",
+      fillStyle: "solid" as const,
+      strokeWidth: 2,
+      strokeStyle: "solid" as const,
+      roughness: 1,
+      opacity: 100,
+      groupIds: [],
+      frameId: null,
+      index: "a0" as const,
+      roundness: null,
+      seed: Math.floor(Math.random() * 100000),
+      version: 1,
+      versionNonce: Math.floor(Math.random() * 100000),
+      isDeleted: false,
+      boundElements: null,
+      updated: Date.now(),
+      link: null,
+      locked: false,
+      text: `[Image failed: ${query || url}]`,
+      fontSize: 20,
+      fontFamily: 1,
+      textAlign: "left" as const,
+      verticalAlign: "top" as const,
+      containerId: null,
+      originalText: `[Image failed: ${query || url}]`,
+      autoResize: true,
+      lineHeight: 1.25,
+    };
+    excalidrawAPI.updateScene({ elements: [...elements, errorElement] });
   }
 }
 
@@ -977,16 +905,11 @@ async function handleShowImage(
 // DIAGRAM HANDLER - NATIVE EXCALIDRAW ELEMENTS
 // ============================================
 
-// Animation timing constants
-const SHAPE_DELAY = 150;    // ms between shape appearing
-const TEXT_DELAY = 100;     // ms after shape for text to appear
-const ARROW_DELAY = 80;     // ms between arrows
-
 function handleDrawDiagram(
   excalidrawAPI: ExcalidrawAPI,
   params: ToolParams
 ): void {
-  const { type = "flowchart", nodes = [], edges, direction = "TB", position = "center" } = params;
+  const { type = "flowchart", nodes = [], edges, direction = "TB" } = params;
 
   if (!nodes || nodes.length === 0) {
     return;
@@ -1002,9 +925,6 @@ function handleDrawDiagram(
 
   const { nodes: parsedNodes, edges: parsedEdges } = parseSimpleDiagram(input);
   const layout = computeLayout(type as DiagramType, parsedNodes, parsedEdges, direction);
-
-  // Get current scene elements
-  const existingElements = excalidrawAPI.getSceneElements();
 
   // Calculate diagram bounding box from layout
   let diagramWidth = 0;
@@ -1022,24 +942,14 @@ function handleDrawDiagram(
   diagramWidth *= diagramScale;
   diagramHeight *= diagramScale;
 
-  // Calculate position based on position parameter
-  const { x: offsetX, y: offsetY } = calculatePosition(
-    excalidrawAPI,
-    position as PositionType,
-    diagramWidth,
-    diagramHeight
-  );
+  // Get position (stacks below existing content)
+  const { x: offsetX, y: offsetY } = getNextPosition(excalidrawAPI, diagramWidth, diagramHeight);
 
   const groupId = generateId();
+  const newElements: any[] = [];
 
-  // Build animation queue: each item is { element, delay }
-  type AnimationItem = { element: any; delay: number };
-  const animationQueue: AnimationItem[] = [];
-  let currentDelay = 0;
-
-  // Create node elements with staggered timing
+  // Create node elements
   layout.nodes.forEach((node: LayoutNode) => {
-    // Apply scale to node position and size
     const nodeX = offsetX + node.x * diagramScale;
     const nodeY = offsetY + node.y * diagramScale;
     const nodeW = node.width * diagramScale;
@@ -1047,7 +957,6 @@ function handleDrawDiagram(
     const shape = getNodeShape(node.style);
     const seed = Math.floor(Math.random() * 100000);
 
-    // Create the shape element
     let shapeElement: any;
 
     if (shape === "diamond") {
@@ -1139,16 +1048,14 @@ function handleDrawDiagram(
       };
     }
 
-    // Add shape to queue
-    animationQueue.push({ element: shapeElement, delay: currentDelay });
-    currentDelay += SHAPE_DELAY;
+    newElements.push(shapeElement);
 
-    // Create label text element (scale font size too)
+    // Create label text element
     const labelFontSize = Math.max(10, Math.round(16 * diagramScale));
     const labelWidth = measureText(node.label, labelFontSize, 1).width;
     const labelHeight = measureText(node.label, labelFontSize, 1).height;
 
-    const textElement = {
+    newElements.push({
       id: generateId(),
       type: "text",
       x: nodeX + (nodeW - labelWidth) / 2,
@@ -1183,18 +1090,13 @@ function handleDrawDiagram(
       originalText: node.label,
       autoResize: true,
       lineHeight: 1.25,
-    };
-
-    // Add text shortly after shape
-    animationQueue.push({ element: textElement, delay: currentDelay });
-    currentDelay += TEXT_DELAY;
+    });
   });
 
   // Create arrow elements for edges
   layout.edges.forEach((edge: LayoutEdge) => {
     if (edge.points.length < 2) return;
 
-    // Apply scale to edge points
     const startX = offsetX + edge.points[0].x * diagramScale;
     const startY = offsetY + edge.points[0].y * diagramScale;
     const endX = offsetX + edge.points[edge.points.length - 1].x * diagramScale;
@@ -1205,7 +1107,7 @@ function handleDrawDiagram(
       [endX - startX, endY - startY],
     ];
 
-    const arrowElement = {
+    newElements.push({
       id: generateId(),
       type: "arrow",
       x: startX,
@@ -1237,10 +1139,7 @@ function handleDrawDiagram(
       endBinding: null,
       startArrowhead: null,
       endArrowhead: "arrow",
-    };
-
-    animationQueue.push({ element: arrowElement, delay: currentDelay });
-    currentDelay += ARROW_DELAY;
+    });
 
     // Add edge label if present
     if (edge.label) {
@@ -1250,7 +1149,7 @@ function handleDrawDiagram(
       const labelWidth = measureText(edge.label, labelFontSize, 1).width;
       const labelHeight = measureText(edge.label, labelFontSize, 1).height;
 
-      const labelElement = {
+      newElements.push({
         id: generateId(),
         type: "text",
         x: midX - labelWidth / 2,
@@ -1285,27 +1184,15 @@ function handleDrawDiagram(
         originalText: edge.label,
         autoResize: true,
         lineHeight: 1.25,
-      };
-
-      animationQueue.push({ element: labelElement, delay: currentDelay });
-      currentDelay += TEXT_DELAY;
+      });
     }
   });
 
-  // Animate: add elements sequentially
-  let addedElements: any[] = [...existingElements];
-
-  animationQueue.forEach(({ element, delay }) => {
-    setTimeout(() => {
-      addedElements = [...addedElements, element];
-      excalidrawAPI.updateScene({
-        elements: addedElements,
-      });
-    }, delay);
+  // Add all elements at once (no animation)
+  const existingElements = excalidrawAPI.getSceneElements();
+  excalidrawAPI.updateScene({
+    elements: [...existingElements, ...newElements],
   });
-
-  // Track for relative positioning (use group ID so we can compute bounds from all group elements)
-  setLastElementId(`group:${groupId}`);
 }
 
 // ============================================
@@ -1415,8 +1302,6 @@ async function handleAnnotate(
   excalidrawAPI.updateScene({
     elements: [...elements, element],
   });
-
-  setLastElementId(element.id);
 }
 
 // ============================================
@@ -1432,27 +1317,20 @@ async function handleDrawFunction(
   params: ToolParams,
   onAnimatedMathGraph?: OnAnimatedMathGraph
 ): Promise<void> {
-  const { expression, position = "center", xMin = -Math.PI, xMax = Math.PI } = params;
+  const { expression, xMin = -Math.PI, xMax = Math.PI } = params;
 
   if (!expression) {
     console.error("[handleDrawFunction] No expression provided");
     return;
   }
 
-  // Get viewport info to convert normalized coords
+  // Get position (stacks below existing content)
+  const { x: posX, y: posY } = getNextPosition(excalidrawAPI, MATH_GRAPH_WIDTH, MATH_GRAPH_HEIGHT);
+
+  // Get viewport info to convert to screen coords
   const appState = excalidrawAPI.getAppState();
   const { scrollX, scrollY, zoom } = appState;
   const zoomValue = zoom?.value || 1;
-
-  // Calculate position based on position parameter
-  const { x: posX, y: posY } = calculatePosition(
-    excalidrawAPI,
-    position as PositionType,
-    MATH_GRAPH_WIDTH,
-    MATH_GRAPH_HEIGHT
-  );
-
-  // Calculate screen pixel coordinates (for SVG overlay)
   const viewportLeft = -scrollX;
   const viewportTop = -scrollY;
   const screenX = (posX - viewportLeft) * zoomValue;
@@ -1478,6 +1356,157 @@ async function handleDrawFunction(
     return;
   }
 
+  // Fallback: render static graph without animation
+  // This is used when no animation callback is provided (e.g., debug tests)
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = MATH_GRAPH_WIDTH * 2; // 2x for retina
+    canvas.height = MATH_GRAPH_HEIGHT * 2;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    ctx.scale(2, 2);
+    const w = MATH_GRAPH_WIDTH;
+    const h = MATH_GRAPH_HEIGHT;
+    const padding = 30;
+
+    // Background
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, w, h);
+
+    // Draw axes
+    ctx.strokeStyle = "#adb5bd";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(padding, h / 2);
+    ctx.lineTo(w - padding, h / 2);
+    ctx.moveTo(w / 2, padding);
+    ctx.lineTo(w / 2, h - padding);
+    ctx.stroke();
+
+    // Parse and evaluate expression
+    const plotWidth = w - 2 * padding;
+    const plotHeight = h - 2 * padding;
+    const steps = 100;
+    const xRange = xMax - xMin;
+
+    // Simple expression evaluator
+    const evalExpr = (x: number): number => {
+      try {
+        // Replace common math functions and operators
+        let expr = expression
+          .replace(/\^/g, "**")
+          .replace(/sin/g, "Math.sin")
+          .replace(/cos/g, "Math.cos")
+          .replace(/tan/g, "Math.tan")
+          .replace(/sqrt/g, "Math.sqrt")
+          .replace(/abs/g, "Math.abs")
+          .replace(/log/g, "Math.log")
+          .replace(/exp/g, "Math.exp")
+          .replace(/pi/gi, "Math.PI")
+          .replace(/e(?![xp])/g, "Math.E");
+        // eslint-disable-next-line no-new-func
+        return new Function("x", `return ${expr}`)(x);
+      } catch {
+        return NaN;
+      }
+    };
+
+    // Calculate y range
+    let yMin = Infinity, yMax = -Infinity;
+    const points: { x: number; y: number }[] = [];
+    for (let i = 0; i <= steps; i++) {
+      const x = xMin + (i / steps) * xRange;
+      const y = evalExpr(x);
+      if (isFinite(y)) {
+        points.push({ x, y });
+        yMin = Math.min(yMin, y);
+        yMax = Math.max(yMax, y);
+      }
+    }
+
+    // Add padding to y range
+    const yPadding = (yMax - yMin) * 0.1 || 1;
+    yMin -= yPadding;
+    yMax += yPadding;
+    const yRange = yMax - yMin;
+
+    // Draw the curve
+    ctx.strokeStyle = "#6F47EB";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    let started = false;
+    for (const pt of points) {
+      const px = padding + ((pt.x - xMin) / xRange) * plotWidth;
+      const py = padding + ((yMax - pt.y) / yRange) * plotHeight;
+      if (!started) {
+        ctx.moveTo(px, py);
+        started = true;
+      } else {
+        ctx.lineTo(px, py);
+      }
+    }
+    ctx.stroke();
+
+    // Add expression label
+    ctx.fillStyle = "#1e1e1e";
+    ctx.font = "14px system-ui, sans-serif";
+    ctx.fillText(`y = ${expression}`, padding, padding - 10);
+
+    // Convert to data URL and add as image
+    const dataUrl = canvas.toDataURL("image/png");
+    const fileId = generateId() as any;
+    const elementId = generateId();
+
+    const imageElement = {
+      id: elementId,
+      type: "image" as const,
+      x: posX,
+      y: posY,
+      width: MATH_GRAPH_WIDTH,
+      height: MATH_GRAPH_HEIGHT,
+      angle: 0,
+      strokeColor: "transparent",
+      backgroundColor: "transparent",
+      fillStyle: "solid" as const,
+      strokeWidth: 1,
+      strokeStyle: "solid" as const,
+      roughness: 0,
+      opacity: 100,
+      groupIds: [],
+      frameId: null,
+      index: "a0" as const,
+      roundness: null,
+      seed: Math.floor(Math.random() * 100000),
+      version: 1,
+      versionNonce: Math.floor(Math.random() * 100000),
+      isDeleted: false,
+      boundElements: null,
+      updated: Date.now(),
+      link: null,
+      locked: false,
+      fileId,
+      status: "saved" as const,
+      scale: [1, 1] as [number, number],
+    };
+
+    const elements = excalidrawAPI.getSceneElements();
+    excalidrawAPI.updateScene({
+      elements: [...elements, imageElement],
+    });
+
+    excalidrawAPI.addFiles([
+      {
+        id: fileId,
+        dataURL: dataUrl,
+        mimeType: "image/png",
+        created: Date.now(),
+        lastRetrieved: Date.now(),
+      },
+    ]);
+  } catch (error) {
+    console.error("[handleDrawFunction] Failed to render static graph:", error);
+  }
 }
 
 /**
@@ -1542,8 +1571,6 @@ export function createMathGraphElements(
       lastRetrieved: Date.now(),
     },
   ]);
-
-  setLastElementId(elementId);
 }
 
 // ============================================
@@ -1627,21 +1654,16 @@ function createIframeElement(
 
 /**
  * Create animation as native Excalidraw iframe element
- * Shows a text placeholder immediately, then replaces with iframe when code is ready
+ * Uses placeholder pattern to reserve space immediately
  */
 async function handleAnimate(
   excalidrawAPI: ExcalidrawAPI,
   params: ToolParams
 ): Promise<void> {
-  const { code, prompt, position = "center" } = params;
+  const { code, prompt } = params;
 
-  // Calculate position IMMEDIATELY before any async work
-  const { x: posX, y: posY } = calculatePosition(
-    excalidrawAPI,
-    position as PositionType,
-    ANIM_WIDTH,
-    ANIM_HEIGHT
-  );
+  // Get position (stacks below existing content)
+  const { x: posX, y: posY } = getNextPosition(excalidrawAPI, ANIM_WIDTH, ANIM_HEIGHT);
 
   const elementId = generateId();
 
@@ -1654,29 +1676,54 @@ async function handleAnimate(
     excalidrawAPI.updateScene({
       elements: [...elements, iframeElement],
     });
-
-    setLastElementId(elementId);
     return;
   }
 
-  // If prompt is provided, show text placeholder then fetch code
+  // If prompt is provided, show placeholder rectangle then fetch code
   if (prompt) {
-    const placeholderId = `placeholder-${elementId}`;
+    const placeholderId = generateId();
+    const loadingTextId = generateId();
+    const groupId = generateId();
 
-    // Create a text placeholder element (native Excalidraw - moves with canvas)
-    const placeholderText = "⏳ Loading animation...";
-    const fontSize = 20;
-    const { width: textWidth, height: textHeight } = measureText(placeholderText, fontSize, 1);
-
-    // Center the text within where the animation will be
-    const textX = posX + (ANIM_WIDTH - textWidth) / 2;
-    const textY = posY + (ANIM_HEIGHT - textHeight) / 2;
-
+    // Create placeholder rectangle (reserves the exact space)
     const placeholderElement = {
       id: placeholderId,
+      type: "rectangle" as const,
+      x: posX,
+      y: posY,
+      width: ANIM_WIDTH,
+      height: ANIM_HEIGHT,
+      angle: 0,
+      strokeColor: "#adb5bd",
+      backgroundColor: "#1a1a2e",
+      fillStyle: "solid" as const,
+      strokeWidth: 1,
+      strokeStyle: "dashed" as const,
+      roughness: 0,
+      opacity: 50,
+      groupIds: [groupId],
+      frameId: null,
+      index: "a0" as const,
+      roundness: { type: 3 },
+      seed: Math.floor(Math.random() * 100000),
+      version: 1,
+      versionNonce: Math.floor(Math.random() * 100000),
+      isDeleted: false,
+      boundElements: null,
+      updated: Date.now(),
+      link: null,
+      locked: false,
+    };
+
+    // Create loading text centered in placeholder
+    const loadingText = "\u23F3 Loading...";
+    const loadingFontSize = 20;
+    const { width: textWidth, height: textHeight } = measureText(loadingText, loadingFontSize, 1);
+    const loadingTextElement = {
+      id: loadingTextId,
       type: "text" as const,
-      x: textX,
-      y: textY,
+      x: posX + (ANIM_WIDTH - textWidth) / 2,
+      y: posY + (ANIM_HEIGHT - textHeight) / 2,
       width: textWidth,
       height: textHeight,
       angle: 0,
@@ -1687,7 +1734,339 @@ async function handleAnimate(
       strokeStyle: "solid" as const,
       roughness: 1,
       opacity: 100,
-      groupIds: [],
+      groupIds: [groupId],
+      frameId: null,
+      index: "a1" as const,
+      roundness: null,
+      seed: Math.floor(Math.random() * 100000),
+      version: 1,
+      versionNonce: Math.floor(Math.random() * 100000),
+      isDeleted: false,
+      boundElements: null,
+      updated: Date.now(),
+      link: null,
+      locked: false,
+      text: loadingText,
+      fontSize: loadingFontSize,
+      fontFamily: 1,
+      textAlign: "center" as const,
+      verticalAlign: "middle" as const,
+      containerId: null,
+      originalText: loadingText,
+      autoResize: true,
+      lineHeight: 1.25,
+    };
+
+    // Add placeholder and loading text to scene immediately
+    let elements = excalidrawAPI.getSceneElements();
+    excalidrawAPI.updateScene({
+      elements: [...elements, placeholderElement, loadingTextElement],
+    });
+
+    try {
+      const response = await fetch("/api/p5", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+
+      // Remove placeholder and loading text
+      elements = excalidrawAPI.getSceneElements();
+      elements = elements.filter((el: any) => el.id !== placeholderId && el.id !== loadingTextId);
+
+      if (!response.ok) {
+        excalidrawAPI.updateScene({ elements });
+        return;
+      }
+
+      const data = await response.json();
+
+      if (data.error || !data.code) {
+        excalidrawAPI.updateScene({ elements });
+        return;
+      }
+
+      // Add the real animation element
+      const html = buildAnimationHTML(data.code);
+      const iframeElement = createIframeElement(elementId, posX, posY, html, "done");
+
+      excalidrawAPI.updateScene({
+        elements: [...elements, iframeElement],
+      });
+
+    } catch {
+      // Remove placeholder and loading text on error
+      elements = excalidrawAPI.getSceneElements();
+      excalidrawAPI.updateScene({
+        elements: elements.filter((el: any) => el.id !== placeholderId && el.id !== loadingTextId),
+      });
+    }
+  }
+}
+
+// ============================================
+// QUESTION HANDLER
+// ============================================
+
+function handleShowQuestion(
+  excalidrawAPI: ExcalidrawAPI,
+  params: ToolParams
+): void {
+  const {
+    question_type = "mcq",
+    question = "",
+    options = [],
+    hint,
+  } = params;
+
+  if (!question) return;
+
+  const groupId = generateId();
+  const newElements: any[] = [];
+
+  // Format the question content based on type
+  let formattedContent = "";
+  const fontSize = 24;
+  const optionFontSize = 20;
+  const hintFontSize = 16;
+  const fontFamily = 1; // Virgil
+
+  // Question type emoji and label
+  const typeLabels: Record<string, { emoji: string; label: string }> = {
+    mcq: { emoji: "🔘", label: "Multiple Choice" },
+    fill_blank: { emoji: "✏️", label: "Fill in the Blank" },
+    long_answer: { emoji: "📝", label: "Long Answer" },
+  };
+
+  const { emoji, label } = typeLabels[question_type] || typeLabels.mcq;
+
+  // Build question header
+  formattedContent = `${emoji} ${label}`;
+  const headerDims = measureText(formattedContent, fontSize, fontFamily);
+
+  // Calculate position for the question box
+  const padding = 20;
+  const lineHeight = 1.4;
+
+  // Measure question text
+  const questionDims = measureText(question, fontSize, fontFamily);
+
+  // Measure options (for MCQ)
+  let optionsHeight = 0;
+  const optionLabels = ["A", "B", "C", "D"];
+  const formattedOptions: string[] = [];
+  if (question_type === "mcq" && options.length > 0) {
+    for (let i = 0; i < options.length && i < 4; i++) {
+      formattedOptions.push(`${optionLabels[i]}) ${options[i]}`);
+    }
+    optionsHeight = formattedOptions.length * (optionFontSize * lineHeight + 8);
+  }
+
+  // Measure hint
+  let hintHeight = 0;
+  let hintText = "";
+  if (hint) {
+    hintText = `💡 Hint: ${hint}`;
+    hintHeight = measureText(hintText, hintFontSize, fontFamily).height + 16;
+  }
+
+  // Calculate total box dimensions
+  const contentWidth = Math.max(
+    headerDims.width,
+    questionDims.width,
+    ...formattedOptions.map(opt => measureText(opt, optionFontSize, fontFamily).width),
+    hint ? measureText(hintText, hintFontSize, fontFamily).width : 0
+  ) + padding * 2;
+
+  const contentHeight =
+    headerDims.height +
+    16 + // gap after header
+    questionDims.height +
+    (optionsHeight > 0 ? 20 + optionsHeight : 0) + // gap + options
+    (hintHeight > 0 ? hintHeight : 0) +
+    padding * 2;
+
+  // Get position
+  const { x: posX, y: posY } = getNextPosition(excalidrawAPI, contentWidth, contentHeight);
+
+  // 1. Create background box with purple accent
+  newElements.push({
+    id: generateId(),
+    type: "rectangle" as const,
+    x: posX,
+    y: posY,
+    width: contentWidth,
+    height: contentHeight,
+    angle: 0,
+    strokeColor: "#9D7CD8",
+    backgroundColor: "#f8f5ff",
+    fillStyle: "solid" as const,
+    strokeWidth: 2,
+    strokeStyle: "solid" as const,
+    roughness: 1,
+    opacity: 100,
+    groupIds: [groupId],
+    frameId: null,
+    index: "a0" as const,
+    roundness: { type: 3 },
+    seed: Math.floor(Math.random() * 100000),
+    version: 1,
+    versionNonce: Math.floor(Math.random() * 100000),
+    isDeleted: false,
+    boundElements: null,
+    updated: Date.now(),
+    link: null,
+    locked: false,
+  });
+
+  // 2. Create header text
+  let currentY = posY + padding;
+  newElements.push({
+    id: generateId(),
+    type: "text" as const,
+    x: posX + padding,
+    y: currentY,
+    width: headerDims.width,
+    height: headerDims.height,
+    angle: 0,
+    strokeColor: "#6F47EB",
+    backgroundColor: "transparent",
+    fillStyle: "solid" as const,
+    strokeWidth: 2,
+    strokeStyle: "solid" as const,
+    roughness: 1,
+    opacity: 100,
+    groupIds: [groupId],
+    frameId: null,
+    index: "a0" as const,
+    roundness: null,
+    seed: Math.floor(Math.random() * 100000),
+    version: 1,
+    versionNonce: Math.floor(Math.random() * 100000),
+    isDeleted: false,
+    boundElements: null,
+    updated: Date.now(),
+    link: null,
+    locked: false,
+    text: formattedContent,
+    fontSize: fontSize,
+    fontFamily: fontFamily,
+    textAlign: "left" as const,
+    verticalAlign: "top" as const,
+    containerId: null,
+    originalText: formattedContent,
+    autoResize: true,
+    lineHeight: 1.25,
+  });
+
+  currentY += headerDims.height + 16;
+
+  // 3. Create question text
+  newElements.push({
+    id: generateId(),
+    type: "text" as const,
+    x: posX + padding,
+    y: currentY,
+    width: questionDims.width,
+    height: questionDims.height,
+    angle: 0,
+    strokeColor: "#1e1e1e",
+    backgroundColor: "transparent",
+    fillStyle: "solid" as const,
+    strokeWidth: 2,
+    strokeStyle: "solid" as const,
+    roughness: 1,
+    opacity: 100,
+    groupIds: [groupId],
+    frameId: null,
+    index: "a0" as const,
+    roundness: null,
+    seed: Math.floor(Math.random() * 100000),
+    version: 1,
+    versionNonce: Math.floor(Math.random() * 100000),
+    isDeleted: false,
+    boundElements: null,
+    updated: Date.now(),
+    link: null,
+    locked: false,
+    text: question,
+    fontSize: fontSize,
+    fontFamily: fontFamily,
+    textAlign: "left" as const,
+    verticalAlign: "top" as const,
+    containerId: null,
+    originalText: question,
+    autoResize: true,
+    lineHeight: 1.25,
+  });
+
+  currentY += questionDims.height + 20;
+
+  // 4. Create options (for MCQ)
+  if (question_type === "mcq" && formattedOptions.length > 0) {
+    for (const opt of formattedOptions) {
+      const optDims = measureText(opt, optionFontSize, fontFamily);
+      newElements.push({
+        id: generateId(),
+        type: "text" as const,
+        x: posX + padding + 16, // indent options
+        y: currentY,
+        width: optDims.width,
+        height: optDims.height,
+        angle: 0,
+        strokeColor: "#495057",
+        backgroundColor: "transparent",
+        fillStyle: "solid" as const,
+        strokeWidth: 2,
+        strokeStyle: "solid" as const,
+        roughness: 1,
+        opacity: 100,
+        groupIds: [groupId],
+        frameId: null,
+        index: "a0" as const,
+        roundness: null,
+        seed: Math.floor(Math.random() * 100000),
+        version: 1,
+        versionNonce: Math.floor(Math.random() * 100000),
+        isDeleted: false,
+        boundElements: null,
+        updated: Date.now(),
+        link: null,
+        locked: false,
+        text: opt,
+        fontSize: optionFontSize,
+        fontFamily: fontFamily,
+        textAlign: "left" as const,
+        verticalAlign: "top" as const,
+        containerId: null,
+        originalText: opt,
+        autoResize: true,
+        lineHeight: 1.25,
+      });
+      currentY += optDims.height + 8;
+    }
+  }
+
+  // 5. Create hint (if provided)
+  if (hint) {
+    currentY += 8; // extra gap before hint
+    const hintDims = measureText(hintText, hintFontSize, fontFamily);
+    newElements.push({
+      id: generateId(),
+      type: "text" as const,
+      x: posX + padding,
+      y: currentY,
+      width: hintDims.width,
+      height: hintDims.height,
+      angle: 0,
+      strokeColor: "#868e96",
+      backgroundColor: "transparent",
+      fillStyle: "solid" as const,
+      strokeWidth: 2,
+      strokeStyle: "solid" as const,
+      roughness: 1,
+      opacity: 100,
+      groupIds: [groupId],
       frameId: null,
       index: "a0" as const,
       roundness: null,
@@ -1699,93 +2078,23 @@ async function handleAnimate(
       updated: Date.now(),
       link: null,
       locked: false,
-      text: placeholderText,
-      fontSize,
-      fontFamily: 1,
-      textAlign: "center" as const,
-      verticalAlign: "middle" as const,
+      text: hintText,
+      fontSize: hintFontSize,
+      fontFamily: fontFamily,
+      textAlign: "left" as const,
+      verticalAlign: "top" as const,
       containerId: null,
-      originalText: placeholderText,
+      originalText: hintText,
       autoResize: true,
       lineHeight: 1.25,
-    };
-
-    // Add placeholder to scene
-    let elements = excalidrawAPI.getSceneElements();
-    excalidrawAPI.updateScene({
-      elements: [...elements, placeholderElement],
     });
-
-    // Set lastElementId now so subsequent tools position relative to where this will be
-    setLastElementId(elementId);
-
-    try {
-      const response = await fetch("/api/p5", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
-      });
-
-      if (!response.ok) {
-        // Update placeholder to show error
-        elements = excalidrawAPI.getSceneElements();
-        excalidrawAPI.updateScene({
-          elements: elements.map((el: any) =>
-            el.id === placeholderId
-              ? { ...el, text: "❌ Animation failed", originalText: "❌ Animation failed", strokeColor: "#e03131" }
-              : el
-          ),
-        });
-        return;
-      }
-
-      const data = await response.json();
-
-      if (data.error || !data.code) {
-        // Update placeholder to show error
-        elements = excalidrawAPI.getSceneElements();
-        excalidrawAPI.updateScene({
-          elements: elements.map((el: any) =>
-            el.id === placeholderId
-              ? { ...el, text: "❌ Animation failed", originalText: "❌ Animation failed", strokeColor: "#e03131" }
-              : el
-          ),
-        });
-        return;
-      }
-
-      // Remove placeholder and add the real animation element
-      const html = buildAnimationHTML(data.code);
-      const iframeElement = createIframeElement(elementId, posX, posY, html, "done");
-
-      elements = excalidrawAPI.getSceneElements();
-      excalidrawAPI.updateScene({
-        elements: [
-          ...elements.filter((el: any) => el.id !== placeholderId),
-          iframeElement,
-        ],
-      });
-
-    } catch {
-      // Update placeholder to show error
-      elements = excalidrawAPI.getSceneElements();
-      excalidrawAPI.updateScene({
-        elements: elements.map((el: any) =>
-          el.id === placeholderId
-            ? { ...el, text: "❌ Animation failed", originalText: "❌ Animation failed", strokeColor: "#e03131" }
-            : el
-        ),
-      });
-    }
-    return;
   }
-}
 
-/**
- * Clear all animations - native elements are cleared with clear_board
- */
-function clearAnimations(): void {
-  animationElements.clear();
+  // Add all elements
+  const existingElements = excalidrawAPI.getSceneElements();
+  excalidrawAPI.updateScene({
+    elements: [...existingElements, ...newElements],
+  });
 }
 
 // ============================================
@@ -1802,7 +2111,6 @@ function handleToolCall(
   switch (toolName) {
     case "clear_board":
       handleClearBoard(excalidrawAPI);
-      clearAnimations();
       break;
     case "add_text":
       handleAddText(excalidrawAPI, params);
@@ -1822,6 +2130,9 @@ function handleToolCall(
       break;
     case "draw_function":
       handleDrawFunction(excalidrawAPI, params, onAnimatedMathGraph);
+      break;
+    case "show_question":
+      handleShowQuestion(excalidrawAPI, params);
       break;
     case "draw_table":
       break;

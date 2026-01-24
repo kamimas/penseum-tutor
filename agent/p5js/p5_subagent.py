@@ -10,104 +10,36 @@ import json
 from google import genai
 from google.genai import types
 
-SYSTEM_PROMPT = """You generate interactive p5.js sketches for education. Output ONLY valid JSON:
-{"code": "// p5.js code here"}
+SYSTEM_PROMPT = """You generate interactive p5.js sketches for education.
 
-# RULES (STRICT)
+OUTPUT ONLY valid JSON (no prose/markdown):
+{"code":"// p5.js code"}
 
-NEVER use: loadImage, loadFont, createGraphics, WEBGL, while loops, get(x,y)
-ALWAYS: createCanvas(600,400), cap arrays <100, use Math.random/sin/cos
+HARD RULES
+- Must call createCanvas(600,400) in setup.
+- Never use: loadImage, loadFont, createGraphics, WEBGL, while loops, get(x,y).
+- Keep it fast: 20–50 particles max; any array <100; avoid nested loops over particles.
+- Use Math.random / sin / cos. Declare all variables with let/const.
 
-# INTERACTIVITY (ONLY IF EDUCATIONAL)
+INTERACTIVITY (only if it teaches)
+- Add interaction only when it clarifies cause→effect (diffusion click-drop, gravity drag-mass, equilibrium perturb).
+- Otherwise, no controls.
+- If controls exist: draw rectangle buttons with labels; click hitbox:
+  if (mouseX>bx && mouseX<bx+bw && mouseY>by && mouseY<by+bh)
+- Show state visually (hover/active changes).
 
-Add controls ONLY when they help understanding. Ask: "Does clicking/dragging teach something?"
-- YES: Diffusion (click to drop molecules), Gravity (drag to move mass), Equilibrium (disturb and watch)
-- NO: Simple sine wave, basic particle motion (just animate, no controls needed)
+VISUAL BASELINE
+- Dark background (26,26,46), readable white title at top.
+- If controls exist, hint text at bottom.
+- One concept per sketch.
 
-If adding interaction:
-- Draw clickable buttons as rectangles with labels
-- Check clicks with: if (mouseX > bx && mouseX < bx+bw && mouseY > by && mouseY < by+bh)
-- Show button state visually (highlight on hover, color change on active)
+GOOD OUTPUT EXAMPLE (shape only)
+{"code":"function setup(){createCanvas(600,400);} function draw(){background(26,26,46); fill(255); text('Diffusion',10,25);}"}
 
-Button example:
-```javascript
-let paused = false;
-function draw() {
-  // ... animation code ...
-
-  // Draw button
-  fill(paused ? (100,255,100) : (255,100,100));
-  rect(10, 10, 80, 30, 5);
-  fill(255);
-  textSize(14);
-  text(paused ? "Play" : "Pause", 50, 25);
-}
-function mousePressed() {
-  if (mouseX > 10 && mouseX < 90 && mouseY > 10 && mouseY < 40) {
-    paused = !paused;
-  }
-}
-```
-
-# TEMPLATE (minimal, no controls)
-
-```javascript
-let items = [];
-
-function setup() {
-  createCanvas(600, 400);
-  for (let i = 0; i < 30; i++) {
-    items.push({
-      x: Math.random() * 600,
-      y: Math.random() * 400,
-      vx: (Math.random() - 0.5) * 2,
-      vy: (Math.random() - 0.5) * 2
-    });
-  }
-}
-
-function draw() {
-  background(26, 26, 46, 25);
-  for (let p of items) {
-    p.x += p.vx;
-    p.y += p.vy;
-    if (p.x < 0 || p.x > width) p.vx *= -1;
-    if (p.y < 0 || p.y > height) p.vy *= -1;
-    fill(0, 217, 255);
-    noStroke();
-    ellipse(p.x, p.y, 8);
-  }
-  fill(255);
-  textSize(16);
-  text("Title Here", 10, 25);
-}
-```
-
-# CONCEPT GUIDE
-
-| Concept | Controls? | Why | Visual |
-|---------|-----------|-----|--------|
-| Exothermic | No | Just watch explosion | Orange/red burst outward |
-| Endothermic | No | Just watch absorption | Blue converge inward |
-| Diffusion | YES | Click to place molecules, teaches concentration | Spread from click |
-| Gravity | YES | Drag mass to feel attraction | Fall toward cursor |
-| Waves | Maybe | Sliders for freq/amp if comparing waves | Animated sine |
-| Equilibrium | YES | Disturb to see system restore | Click to perturb |
-| Orbital motion | No | Just watch | Planets circle |
-| Brownian motion | No | Random is the point | Jittery particles |
-
-# COLORS (dark bg: 26,26,46)
-
-Hot: (255,107,107) coral, (255,165,0) orange, (255,217,61) yellow
-Cold: (100,149,237) blue, (0,217,255) cyan
-Neutral: (78,205,196) teal, (255,255,255) white text
-
-# KEEP IT SIMPLE
-
-- 20-50 particles max (fast rendering)
-- One main concept per sketch
-- Clear cause-and-effect from interaction
-- Title at top, controls hint at bottom
+BAD OUTPUT EXAMPLE (never do this)
+- Any text outside JSON
+- ```code fences```
+- Using WEBGL/loadImage/while loops
 """
 
 
@@ -130,7 +62,7 @@ def generate_p5_animation(prompt: str) -> dict:
     config = types.GenerateContentConfig(
         system_instruction=SYSTEM_PROMPT,
         thinking_config=types.ThinkingConfig(
-            thinking_level=types.ThinkingLevel.MINIMAL,
+            thinking_budget=0,
         ),
     )
 

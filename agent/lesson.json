@@ -1,30 +1,36 @@
 {
-  "title": "Introduction to Variables: The Unknown Number",
+  "title": "Introduction to Variables in Algebra",
   "subject": "Math",
   "concepts": [
     {
-      "name": "The Mystery Box (Hook & Prior Knowledge)",
-      "instructions": "Imagine you are baking cookies, and a recipe calls for 'some amount' of flour, but the label fell off the bag. How would you represent that unknown amount in writing so you could solve the recipe later? draw('quickly: drawing of a closed, unlabeled box labeled with a question mark')"
+      "name": "Hook: The Unknown Box",
+      "script": "Imagine you are at a grocery store, and a recipe calls for 'some amount of flour,' but doesn't specify how much. How can we write that unknown amount down mathematically?",
+      "visual": "quickly: A simple drawing of an empty cardboard box with a large question mark on it."
     },
     {
-      "name": "Defining the Variable (Explain)",
-      "instructions": "That unknown amount is exactly what a variable is in math—a symbol, usually a letter like 'x' or 'y', that stands for a number we don't know yet. If we replace the question mark box with 'x', how does that make the recipe easier to write down? draw('animate: question mark box transforms into the letter x')"
+      "name": "Retrieve: Connecting to Prior Knowledge",
+      "script": "Before we dive in, what kind of math problems have you solved before that involved finding a missing number? What did you call that missing part?",
+      "visual": "quickly: Text: 'Finding Missing Numbers: (e.g., 3 + ? = 7)'"
     },
     {
-      "name": "Variables in Simple Equations (Concrete Example)",
-      "instructions": "If the recipe needed 2 cups of flour plus the unknown amount (x) to equal 5 cups total, we write it as 2 + x = 5. What concrete action must we do to the 5 cups to figure out what 'x' is? draw('show me the equation 2 + x = 5 with visual representations of 2 cups, x cups, and 5 total cups')"
+      "name": "Explain: Defining Variables",
+      "script": "In algebra, we formalize that unknown! We replace the question mark with a letter, called a variable, usually 'x'. This variable is just a placeholder for a number we don't know yet.",
+      "visual": "animate: The question mark in the box changes to the letter 'x'. Text label appears: 'Variable = Unknown Value'"
     },
     {
-      "name": "Solving for X (Elaboration)",
-      "instructions": "Exactly, we subtract! We take away the 2 cups we know from the 5 total cups. Why is it important that the variable 'x' represents a *specific* number, even if we don't know it right away? draw('show the result: x = 3, linking back to the 3 actual cups of flour')"
+      "name": "Example: Variables in Action (Concrete)",
+      "script": "If I buy 5 apples and some unknown number of oranges, and I end up with 12 pieces of fruit total, we write that as 5 + x = 12. Here, x stands for the exact number of oranges. How many oranges do you think x represents in this situation?",
+      "visual": "show me: A simple bar model. One side is labeled '5 Apples'. The other side is labeled 'x Oranges'. The total bar is labeled '12 Fruit'."
     },
     {
-      "name": "Variables Beyond Addition (Connecting & New Context)",
-      "instructions": "Variables aren't just for adding. If you bought 4 identical shirts that cost 'y' dollars each, and the total bill was $60, what is the operation involved? How is this different from the cookie problem? draw('show the equation 4 * y = 60')"
+      "name": "Elaboration: Why Use Letters?",
+      "script": "Why do mathematicians prefer using 'x' instead of just leaving a blank space? Think about how much easier it is to talk about and manipulate equations when the unknown has a specific name.",
+      "visual": "quickly: Text comparison: '3 + ___ = 7' versus '3 + x = 7'. Circle the 'x' and label it 'Consistent Placeholder'."
     },
     {
-      "name": "Quick Retrieval Check (Summary)",
-      "instructions": "Quickly, what is the main job of a variable in an equation, and can you name one letter we commonly use for it? draw('quickly: text summary showing: Variable = Unknown Number; Common letter = x')"
+      "name": "Summary & Next Step",
+      "script": "We learned that a variable is a letter representing an unknown number, like 'x' in our apple problem. If 5 + x equals 12, what number must x be for the equation to be true?",
+      "visual": "quickly: Review equation: '5 + x = 12. What is x?'"
     }
   ]
 }

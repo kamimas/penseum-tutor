@@ -1,3 +1,20 @@
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+  --font-instrument-serif: 'Instrument Serif', Georgia, serif;
+}
+
+/* Instrument Serif styling */
+.font-serif {
+  font-family: var(--font-instrument-serif);
+  font-weight: 400;
+}
+
+.font-serif-italic {
+  font-family: var(--font-instrument-serif);
+  font-style: italic;
+}

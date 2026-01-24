@@ -526,6 +526,59 @@ function draw() {
             Test x²
           </button>
 
+          <button
+            onClick={() => {
+              if (!excalidrawAPI) return;
+              // Test MCQ question
+              triggerToolCall(excalidrawAPI, "show_question", {
+                question_type: "mcq",
+                question: "What organelle is known as the powerhouse of the cell?",
+                options: ["Nucleus", "Mitochondria", "Ribosome", "Golgi apparatus"],
+                correct_answer: "B",
+                hint: "It produces ATP through cellular respiration"
+              });
+            }}
+            style={{
+              padding: "10px 20px",
+              borderRadius: 8,
+              border: "1px solid #9D7CD8",
+              background: "white",
+              color: "#9D7CD8",
+              fontSize: 14,
+              fontWeight: 500,
+              cursor: "pointer",
+              transition: "all 0.2s ease",
+            }}
+          >
+            Test MCQ
+          </button>
+
+          <button
+            onClick={() => {
+              if (!excalidrawAPI) return;
+              // Test fill in the blank
+              triggerToolCall(excalidrawAPI, "show_question", {
+                question_type: "fill_blank",
+                question: "The process by which plants convert sunlight into energy is called ___.",
+                correct_answer: "photosynthesis",
+                hint: "It happens in the chloroplasts"
+              });
+            }}
+            style={{
+              padding: "10px 20px",
+              borderRadius: 8,
+              border: "1px solid #7EC699",
+              background: "white",
+              color: "#7EC699",
+              fontSize: 14,
+              fontWeight: 500,
+              cursor: "pointer",
+              transition: "all 0.2s ease",
+            }}
+          >
+            Test Fill Blank
+          </button>
+
           {lastResult && (
             <div style={{ marginLeft: "auto", fontSize: 12, color: "#666" }}>
               {lastResult.toolCalls?.length || 0} tool call(s)

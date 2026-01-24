@@ -6,7 +6,13 @@ module.exports = {
     './src/app/**/*.{js,ts,jsx,tsx,mdx}',
   ],
   theme: {
-    extend: {},
+    extend: {
+      fontFamily: {
+        serif: ["var(--font-instrument-serif)", "Georgia", "serif"],
+        mono: ["ui-monospace", "SFMono-Regular", "monospace"],
+        sans: ["system-ui", "-apple-system", "sans-serif"],
+      },
+    },
   },
   plugins: [],
 }

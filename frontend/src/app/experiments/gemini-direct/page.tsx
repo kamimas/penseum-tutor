@@ -62,6 +62,33 @@ export default function GeminiDirectIndex() {
             Open Phase 4
           </Link>
         </div>
+
+        <div className="bg-gray-800 rounded-lg p-6 border border-red-500/30">
+          <h2 className="text-xl font-semibold mb-2 text-red-400">Tool Latency Test</h2>
+          <p className="text-gray-400 mb-4">
+            Measure tool call latency. Compare Gemini, xAI, and OpenAI.
+          </p>
+          <div className="flex gap-3 flex-wrap">
+            <Link
+              href="/experiments/gemini-direct/tool-latency"
+              className="inline-block bg-red-600 hover:bg-red-700 px-4 py-2 rounded"
+            >
+              Gemini Latency
+            </Link>
+            <Link
+              href="/experiments/xai-realtime"
+              className="inline-block bg-yellow-600 hover:bg-yellow-700 px-4 py-2 rounded"
+            >
+              xAI Latency
+            </Link>
+            <Link
+              href="/experiments/openai-realtime"
+              className="inline-block bg-emerald-600 hover:bg-emerald-700 px-4 py-2 rounded"
+            >
+              OpenAI Latency
+            </Link>
+          </div>
+        </div>
       </div>
 
       <div className="mt-8 p-4 bg-gray-800 rounded-lg max-w-2xl">

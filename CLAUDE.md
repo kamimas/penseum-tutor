@@ -2,71 +2,85 @@
 
 ## Project Overview
 
-Penseum Tutor: Real-time multimodal AI tutoring platform with Next.js frontend (Excalidraw whiteboard), Python agent (LiveKit), and Gemini Realtime API.
+Penseum Tutor: Real-time AI tutoring with Excalidraw whiteboard and Gemini Live API.
+
+**Production URL**: https://L0.penseum.com
 
 ## Commands
 
 ```bash
-# Full Stack
-docker-compose up --build
-
-# Frontend Only
-cd frontend && npm install && npm run dev
-
-# Agent Only
-cd agent && source venv/bin/activate && python tutor.py dev
-
-# Testing (no LiveKit needed)
-cd agent && python draw_subagent.py "explain photosynthesis"
-cd agent && python p5js/p5_subagent.py "animate an exothermic reaction"
-# http://localhost:3000/test-draw
-# http://localhost:3000/test-p5
+# Local Development
+docker compose up --build
 ```
 
 ## Architecture
 
 ```
-Realtime Tutor (Gemini)
-  ├── Voice conversation + video input
-  └── Tools: draw(query), clear_board
+Browser (Gemini Live WebSocket)
+  ├── Voice conversation
+  ├── Canvas streaming (1 FPS)
+  └── Tools: draw(query), clear_board()
 
-draw(query) → Frontend → /api/draw → Draw Sub-Agent (Gemini Flash)
-
-Draw Sub-Agent Tools:
-  - add_text(content, size, position)
-  - show_image(query, position)
-  - draw_diagram(type, nodes, direction)
-  - annotate(shape, x, y, width, height, target)
-  - animate(prompt, position) → p5.js iframe
+draw(query) → /api/draw → Draw Server (FastAPI) → Gemini Flash
+                                    ↓
+                            Tool calls returned to frontend
+                                    ↓
+                            ExcalidrawToolHandler renders
 ```
 
 ## Key Files
 
 ```
-agent/
-├── tutor.py              # Main realtime agent
-├── draw_subagent.py      # R&D version (CLI testing)
-├── draw_subagent_live.py # Production version
-└── p5js/p5_subagent.py   # p5.js animation generator
-
 frontend/src/
-├── app/page.tsx                         # Main entry
-├── app/api/draw/route.ts                # Draw sub-agent API
-├── app/api/p5/route.ts                  # p5.js animation API
-├── app/test-draw/page.tsx               # Test page
-└── components/ExcalidrawToolHandler.tsx # Tool rendering
+├── app/page.tsx                              # Main tutor (landing + whiteboard)
+├── app/api/draw/route.ts                     # Proxies to draw-server
+├── app/experiments/gemini-direct/lib/
+│   ├── GeminiLiveClient.ts                   # Gemini WebSocket client
+│   ├── AudioCapture.ts                       # Mic capture (16kHz PCM)
+│   └── AudioPlayback.ts                      # Audio output
+├── components/ExcalidrawToolHandler.tsx      # Renders draw tool calls
+└── components/landing/InvestorOverlay.tsx    # Landing page UI
+
+agent/
+├── draw_server.py        # FastAPI server (keeps Python warm)
+├── draw_subagent.py      # Gemini Flash for whiteboard tools
+└── p5js/p5_subagent.py   # p5.js animation generator
 ```
 
 ## Environment Variables
 
 ```
-LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
-GOOGLE_API_KEY   # Gemini Realtime + Sub-agents
-SERPAPI_API_KEY  # Image search
+GOOGLE_API_KEY    # Gemini Live + Flash
+SERPAPI_API_KEY   # Image search
 ```
 
-## Current Priorities
+## VPS Deployment
 
-1. **Animate Drawing Actions (High)** - Make annotations feel hand-drawn. R&D in `AnimatedAnnotation.tsx` using Framer Motion SVG + Excalidraw `freedraw` elements.
-2. **P5.js Prompt Optimization (Medium)** - Trim `p5_subagent.py` 500+ line prompt.
-3. **P5.js Iframe Deletable (Low)** - Add close button to animation overlays.
+**Host**: OVH VPS (vps-a37f039e.vps.ovh.ca)
+**User**: ubuntu
+**Project path**: /home/ubuntu/penseum-tutor
+
+### Services
+- **Caddy**: Reverse proxy with auto-HTTPS (Let's Encrypt)
+- **Frontend**: Next.js on port 3004 (dev mode for hot reload)
+- **Draw server**: FastAPI on port 5001
+
+### Deploy a file change
+```bash
+# 1. SCP the changed file
+scp <local-file> ubuntu@148.113.203.68:/home/ubuntu/penseum-tutor/<path>
+
+# 2. Restart the container
+ssh ubuntu@148.113.203.68 "cd /home/ubuntu/penseum-tutor && docker compose restart frontend"
+```
+
+### View logs
+```bash
+ssh ubuntu@148.113.203.68 "cd /home/ubuntu/penseum-tutor && docker compose logs -f frontend"
+ssh ubuntu@148.113.203.68 "cd /home/ubuntu/penseum-tutor && docker compose logs -f draw-server"
+```
+
+### Full rebuild (only if dependencies change)
+```bash
+ssh ubuntu@148.113.203.68 "cd /home/ubuntu/penseum-tutor && docker compose down && docker compose up --build -d"
+```

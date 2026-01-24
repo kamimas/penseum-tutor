@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { spawn } from "child_process";
-import * as path from "path";
+
+const DRAW_SERVER_URL = process.env.DRAW_SERVER_URL || "http://localhost:5001";
 
 export async function POST(request: NextRequest) {
   try {
@@ -14,59 +14,32 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Path to the Python p5.js sub-agent
-    const agentPath = path.join(process.cwd(), "..", "agent", "p5js");
-    const scriptPath = path.join(agentPath, "p5_subagent.py");
-    const venvPython = path.join(process.cwd(), "..", "agent", "venv", "bin", "python");
-
-    // Call the Python sub-agent
-    const result = await new Promise<any>((resolve, reject) => {
-      const python = spawn(venvPython, [scriptPath, prompt], {
-        cwd: agentPath,
-        env: {
-          ...process.env,
-          GOOGLE_API_KEY: process.env.GOOGLE_API_KEY,
-        },
-      });
-
-      let stdout = "";
-      let stderr = "";
-
-      python.stdout.on("data", (data) => {
-        stdout += data.toString();
-      });
-
-      python.stderr.on("data", (data) => {
-        stderr += data.toString();
-      });
-
-      python.on("close", (code) => {
-        if (code !== 0) {
-          reject(new Error(`Python script exited with code ${code}. stderr: ${stderr}`));
-          return;
-        }
-
-        try {
-          // Extract JSON from output (skip the "Prompt:" and "---" lines)
-          const lines = stdout.split("\n");
-          const jsonStartIndex = lines.findIndex((line) =>
-            line.trim().startsWith("{")
-          );
-          if (jsonStartIndex === -1) {
-            reject(new Error("Could not find JSON output"));
-            return;
-          }
-          const jsonOutput = lines.slice(jsonStartIndex).join("\n");
-          const parsed = JSON.parse(jsonOutput);
-          resolve(parsed);
-        } catch {
-          reject(new Error("Failed to parse JSON from Python script"));
-        }
-      });
+    // Call persistent Python server instead of spawning
+    const response = await fetch(`${DRAW_SERVER_URL}/p5`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt }),
     });
 
-    return NextResponse.json(result);
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: "P5 server error" }));
+      return NextResponse.json(
+        { error: error.detail || "P5 server error" },
+        { status: response.status }
+      );
+    }
+
+    const data = await response.json();
+    return NextResponse.json(data);
   } catch (error: any) {
+    // Check if it's a connection error (server not running)
+    if (error.cause?.code === "ECONNREFUSED") {
+      return NextResponse.json(
+        { error: "Draw server not running. Start with: cd agent && uvicorn draw_server:app --port 5001" },
+        { status: 503 }
+      );
+    }
+
     return NextResponse.json(
       { error: error.message || "Failed to generate animation" },
       { status: 500 }

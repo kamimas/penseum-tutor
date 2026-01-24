@@ -1,29 +1,25 @@
-version: '3.8'
-
 services:
-  # The UI
   frontend:
     build: ./frontend
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_LIVEKIT_URL=${LIVEKIT_URL}
-      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
-      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
+      - NEXT_PUBLIC_GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - SERPAPI_API_KEY=${SERPAPI_API_KEY}
+      - DRAW_SERVER_URL=http://draw-server:5001
     volumes:
-      - ./frontend:/app
-      - /app/node_modules
-
-  # The Brain
-  agent:
-    build: ./agent
-    platform: linux/amd64 # Ensures xAI/Python libs compatibility on Mac M1/M2/M3
+      - ./frontend/src:/app/src
     depends_on:
-      - frontend
+      - draw-server
+
+  draw-server:
+    build: ./agent
+    ports:
+      - "5001:5001"
     environment:
-      - LIVEKIT_URL=${LIVEKIT_URL}
-      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
-      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
-      - XAI_API_KEY=${XAI_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
     volumes:
-      - ./agent:/app
+      - ./agent/draw_server.py:/app/draw_server.py
+      - ./agent/draw_subagent.py:/app/draw_subagent.py
+      - ./agent/p5js:/app/p5js
+    command: uvicorn draw_server:app --host 0.0.0.0 --port 5001 --reload
