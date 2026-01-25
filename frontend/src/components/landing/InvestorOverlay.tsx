@@ -67,7 +67,7 @@ export default function InvestorOverlay({ scrollProgress, onStart }: InvestorOve
   return (
     <div className="w-full">
       {/* Page 1: Friction Phase */}
-      <section className="h-screen w-full flex flex-col items-center justify-center relative">
+      <section className="h-screen w-full flex flex-col items-center justify-start pt-[30vh] relative">
         <motion.div
           className="text-center"
           style={{ opacity: frictionOpacity }}
@@ -100,7 +100,7 @@ export default function InvestorOverlay({ scrollProgress, onStart }: InvestorOve
       </section>
 
       {/* Page 2: Reveal Phase - INTIMATE */}
-      <section className="h-screen w-full relative flex items-center justify-center px-4">
+      <section className="h-screen w-full relative flex flex-col items-center justify-start pt-[25vh] px-4">
         {/* Mobile: Stacked vertical layout */}
         <div
           className="flex flex-col items-center gap-2 md:hidden"
@@ -128,7 +128,7 @@ export default function InvestorOverlay({ scrollProgress, onStart }: InvestorOve
 
         {/* Desktop: Side-by-side with slide animation */}
         <div
-          className="hidden md:flex absolute inset-0 items-center justify-center"
+          className="hidden md:flex absolute inset-0 justify-center items-start pt-[25vh]"
           style={{ opacity: revealOpacity }}
         >
           {/* "1 Teacher" - starts dead center, slides left to make room */}
@@ -159,7 +159,7 @@ export default function InvestorOverlay({ scrollProgress, onStart }: InvestorOve
 
         {/* Brand section */}
         <motion.div
-          className="absolute bottom-[28%] md:bottom-[18%] left-0 right-0 flex flex-col items-center px-4"
+          className="absolute bottom-[40%] md:bottom-[30%] left-0 right-0 flex flex-col items-center px-4"
           style={{ opacity: brandOpacity }}
         >
           {/* Penseum + Heartbeat indicator */}

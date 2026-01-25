@@ -157,10 +157,25 @@ const CLEAR_BOARD_TOOL: FunctionDeclaration = {
 // =============================================================================
 
 function MinimalToolbar({ excalidrawAPI, isMobile }: { excalidrawAPI: any; isMobile: boolean }) {
-  const [activeTool, setActiveTool] = useState<string>("freedraw");
+  const [activeTool, setActiveTool] = useState<string>("hand");
   const [isExpanded, setIsExpanded] = useState(false);
 
+  // Sync initial tool with Excalidraw when API becomes available
+  useEffect(() => {
+    if (excalidrawAPI) {
+      excalidrawAPI.setActiveTool({ type: activeTool });
+    }
+  }, [excalidrawAPI]);
+
   const tools = [
+    { id: "hand", label: "Move", icon: (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/>
+        <path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v6"/>
+        <path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8"/>
+        <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>
+      </svg>
+    )},
     { id: "freedraw", label: "Draw", icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
@@ -470,11 +485,6 @@ function GeminiChatPill({ connectionState, isMicEnabled, onToggleMic, onEndSessi
   return (
     <div className="fixed right-6 top-1/2 -translate-y-1/2 z-[1000] flex flex-col" style={{ width: 320 }}>
       <div style={{ background: "#FAF9F7", border: "1px solid #E8E4DE", borderRadius: 24, boxShadow: "0 8px 32px rgba(0,0,0,0.08)", overflow: "hidden", position: "relative" }}>
-        {/* End Session Button */}
-        <button onClick={onEndSession} className="absolute top-3 right-3 transition-all hover:scale-110 active:scale-95 hover:bg-red-50" style={{ width: 28, height: 28, borderRadius: "50%", border: "1px solid #E8E4DE", background: "#FAF9F7", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 10 }} title="End session">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="#999"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" /></svg>
-        </button>
-
         {/* Message Area */}
         <div style={{ padding: "20px 20px 16px", minHeight: 200, maxHeight: 300, position: "relative", overflowY: "auto", overflowX: "hidden" }}>
           <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 40, background: "linear-gradient(to bottom, #FAF9F7 0%, transparent 100%)", pointerEvents: "none", zIndex: 1 }} />
@@ -1145,6 +1155,11 @@ function GeminiRoom({ onReset }: { onReset: () => void }) {
       <Excalidraw
         excalidrawAPI={(api: any) => setExcalidrawAPI(api)}
         isCollaborating={true}
+        initialData={{
+          appState: {
+            activeTool: { type: "hand", customType: null, lastActiveTool: null, locked: false },
+          },
+        }}
         UIOptions={{
           canvasActions: { loadScene: false, export: false, saveAsImage: false, saveToActiveFile: false, toggleTheme: false, clearCanvas: false },
           tools: { image: true },
